@@ -1,170 +1,126 @@
 # SchemaSlim
 
+*Local JIT virtualizing reverse-proxy for Model Context Protocol.*
+
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![MCP Protocol v1.3+](https://img.shields.io/badge/MCP-v1.3+-8A2BE2.svg)](https://modelcontextprotocol.io/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/)
-[![Tests](https://img.shields.io/badge/tests-93%20passed%20%7C%20100%25-brightgreen.svg)](https://github.com/)
-[![Security Audit](https://img.shields.io/badge/security-audit%20PASS-brightgreen.svg)](https://github.com/)
+[![Tests](https://img.shields.io/badge/tests-104%20passed%20%7C%20100%25-brightgreen.svg)](https://github.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Cost](https://img.shields.io/badge/zero%20cost-100%25%20local-success.svg)](https://github.com/)
 
-Local virtualizing reverse-proxy for the Model Context Protocol (MCP). Eliminates **Tool Explosion** and context window exhaustion by replacing static multi-server tool schemas with on-demand semantic retrieval (`schemaslim_search`) and lazy proxy dispatch (`schemaslim_call`).
+Connecting dozens of MCP servers causes severe **Tool Explosion**: loading hundreds of static tool schemas consumes 15,000–30,000 prompt tokens before a conversation even begins, inflating LLM costs and degrading reasoning quality. **SchemaSlim** replaces static tool schemas with exactly **2 dynamic meta-tools** (`schemaslim_search` and `schemaslim_call`), reducing context overhead by **70–90%** through fast local hybrid retrieval (`sqlite-vec` + `FTS5` + `FastEmbed`) with zero external API calls.
 
 ---
 
-## Architecture
+## Architecture & Data Flow
 
 ```text
-┌─────────────────────────┐
-│       LLM Client        │  (Claude Desktop, Antigravity, Cursor)
-└────────────┬────────────┘
-             │ Exposes exactly 2 Meta-Tools:
-             │  • schemaslim_search(query, limit)
-             │  • schemaslim_call(namespaced_name, arguments)
-┌────────────▼────────────┐
-│       SchemaSlim        │  ◄── FastEmbed + sqlite-vec (Dense + FTS5 BM25)
-└────────────┬────────────┘
-             │ Lazy Persistent Sessions (MCPSessionPool)
-    ┌────────┴───────────────────────────┐
-    │                                    │
-┌───▼──────────────────┐        ┌────────▼─────────────┐
-│ Stdio MCP Subprocess │        │    SSE MCP Server    │
-│  (GitHub, Git, ...)  │        │   (Postgres, APIs)   │
-└──────────────────────┘        └──────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│              LLM Client (Claude / Antigravity / Cursor)     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ Exposes only 2 Meta-Tools:
+                               │  • schemaslim_search(query, limit)
+                               │  • schemaslim_call(namespaced_name, arguments)
+┌──────────────────────────────▼──────────────────────────────┐
+│                  SchemaSlim Virtual Proxy                   │
+│                                                             │
+│   FastEmbed (BGE-small)  ◄── Hybrid Search ──►  sqlite-vec  │
+│   Dense Embeddings 384d                         BM25 FTS5   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ Lazy Persistent Sessions (MCPSessionPool)
+          ┌────────────────────┴───────────────────┐
+          │                                        │
+┌─────────▼──────────────┐              ┌──────────▼──────────────┐
+│  Stdio Subprocesses    │              │  Remote SSE Endpoints   │
+│  (GitHub, FS, Git...)  │              │  (Postgres, Motion, API)│
+└────────────────────────┘              └─────────────────────────┘
 ```
 
 ---
 
-## Benchmark & Token Economy
+## One-Command Quickstart
 
-Evaluated on 4 realistic MCP servers (`git_server`, `db_server`, `fs_server`, `api_server`) with **20 tools**:
-
-| Metric | Direct MCP (Baseline) | SchemaSlim (Virtualized) | Impact |
-| :--- | :---: | :---: | :---: |
-| **Active Tools in Prompt** | 20 tools | **2 meta-tools** | **-90% prompt tools** |
-| **Context Size / Turn** | 1,925 tokens | **~502 tokens** | **~74% token reduction** |
-| **Tokens Saved (20-Turn Session)** | 0 tokens | **~28,460 tokens saved** | Significant cost reduction |
-| **Search Routing Latency** | — | **~50–55 ms** (p50: 53ms) | Near-instant local search |
-| **Transport Stream Purity** | JSON-RPC | JSON-RPC (100% pure stdout) | Logs & TUI isolated to stderr |
-
----
-
-## Quickstart
-
-### 1. Installation
-
-Install via `uv` (recommended) or `pip`:
-
+### 1. Install via `uv tool`
 ```bash
-# Global tool via uv
 uv tool install schemaslim
-
-# Or inside a project virtualenv
-pip install schemaslim
 ```
+*(Or install in an active Python virtual environment via `pip install schemaslim`)*
 
-### 2. Configuration
-
-Generate a configuration file:
+### 2. Wrap Existing MCP Clients Instantly
+Automatically discovers configurations for **Claude Desktop**, **Google Antigravity**, **Cursor**, and **VS Code**, creates safe `.schemaslim.bak` backups, migrates server definitions to the global registry, and routes client traffic through SchemaSlim:
 
 ```bash
-schemaslim config init
+schemaslim wrap
 ```
 
-Configure child servers in `schemaslim.json` (or `~/.schemaslim/config.json`):
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"]
-    },
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_..." }
-    }
-  },
-  "settings": {
-    "db_path": "~/.schemaslim/index.db",
-    "top_k": 3
-  }
-}
-```
-
-Harvest and index tool schemas into the local vector database:
-
+To roll back at any time:
 ```bash
-schemaslim index
-```
-
-### 3. Client Integration
-
-#### Claude Desktop (`claude_desktop_config.json`)
-```json
-{
-  "mcpServers": {
-    "schemaslim": {
-      "command": "schemaslim",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-#### Google Antigravity IDE (`antigravity.json`)
-```json
-{
-  "mcpServers": {
-    "schemaslim": {
-      "command": "schemaslim",
-      "args": ["serve"]
-    }
-  }
-}
+schemaslim unwrap
 ```
 
 ---
 
-## CLI Reference
+## Key Features
 
-| Command | Options | Description |
+- **Zero Configuration Overhead**: One command (`schemaslim wrap`) auto-detects client configurations and virtualizes all tools in seconds with interactive confirmation (`Space` / `Enter`).
+- **100% Local Hybrid Semantic Indexing**: Combines vector similarity (`sqlite-vec` + ONNX `FastEmbed BGE-small-en-v1.5`) and lexical keyword ranking (`SQLite FTS5 BM25`). Runs entirely offline with 0 API keys and zero network latency.
+- **Dual-Mode Operation**:
+  - Pure stdio RPC transport (clean JSON-RPC channel on stdout).
+  - Live TUI telemetry dashboard on stderr (`schemaslim serve --tui`) showing real-time token savings and tool call latency.
+- **Resilient & Cross-Platform**:
+  - Full Windows UTF-8 BOM (`utf-8-sig`) handling for flawless PowerShell compatibility.
+  - Automatic `/sse` URL normalization and fallback for remote endpoints.
+- **Hardened Security Perimeter**:
+  - Untrusted current working directory (`CWD`) configs blocked by default.
+  - Process environment isolation preventing host secrets from leaking to child MCP tools.
+  - Strict server namespace boundaries preventing confused deputy attacks.
+
+---
+
+## Token Economy & Benchmark
+
+Measured on 4 realistic MCP servers (`git_server`, `db_server`, `fs_server`, `api_server`) with **20 tools**:
+
+| Metric | Direct MCP (Static) | SchemaSlim (Virtualized) | Economy Impact |
+| :--- | :---: | :---: | :---: |
+| **Tools in Prompt** | 20 tools | **2 meta-tools** | **-90% tools loaded** |
+| **Context Overhead** | 1,925 tokens | **~502 tokens** | **~74% token reduction** |
+| **Tokens Saved (20-Turn Session)** | 0 tokens | **+28,460 tokens** | Major API cost savings |
+| **Search Routing Latency** | — | **~50–55 ms** (p50: 53ms) | Transparent & near-instant |
+| **Stream Integrity** | JSON-RPC | JSON-RPC (100% pure stdout) | Diagnostics isolated to stderr |
+
+---
+
+## Commands Cheatsheet
+
+| Command | Usage | Description |
 | :--- | :--- | :--- |
-| `schemaslim index` | `[-c CONFIG] [--allow-cwd] [-f] [-v]` | Harvest schemas from child servers and update vector index |
-| `schemaslim search "<query>"` | `[-l LIMIT] [-t THRESHOLD] [-c CONFIG] [--allow-cwd]` | Test hybrid semantic search query matching |
-| `schemaslim serve` | `[-c CONFIG] [--allow-cwd] [--tui/--no-tui]` | Run virtualizing proxy server over stdio |
-| `schemaslim stats` | `[-c CONFIG] [--allow-cwd]` | Display catalog footprint and token economy metrics |
-| `schemaslim benchmark` | `[-r RUNS] [-o table\|json]` | Run synthetic stress benchmark measuring savings and latency |
-| `schemaslim config validate` | `[PATH] [--allow-cwd] [-v]` | Validate configuration against Pydantic schema |
-| `schemaslim config show` | `[PATH] [--allow-cwd]` | Display active configuration in formatted JSON |
-| `schemaslim config init` | `[PATH] [-f]` | Generate a starter configuration template |
+| `wrap` | `schemaslim wrap [-y] [--no-index]` | Auto-discover client configs, backup, and virtualize servers |
+| `unwrap` | `schemaslim unwrap [-y]` | Restore original client config from `.schemaslim.bak` |
+| `index` | `schemaslim index [-f] [-v]` | Harvest schemas from active child servers and build vector index |
+| `search` | `schemaslim search "<query>" [-l 3]` | Test hybrid semantic tool retrieval from command line |
+| `stats` | `schemaslim stats` | Display catalog token footprint and per-turn savings |
+| `benchmark` | `schemaslim benchmark [-r 5]` | Run synthetic benchmark measuring savings and latency |
+| `serve` | `schemaslim serve [--tui]` | Launch the virtualizing MCP server over stdio |
+| `config` | `schemaslim config [validate\|show\|init]` | Validate, inspect, or initialize configuration |
 
 ---
 
 ## Security Architecture
 
-SchemaSlim is hardened against common proxy and supply-chain vulnerabilities:
-
-- **Host Secret Isolation**: Child subprocesses do not inherit `os.environ`. Only explicitly configured environment variables (`config.env`) are passed; otherwise, the MCP SDK default environment filter applies.
-- **Untrusted CWD Protection**: Loading configurations from the current working directory (`./schemaslim.json`) is blocked by default. Requires `--allow-cwd` or `SCHEMASLIM_ALLOW_CWD=1`. Trusted global paths (`~/.schemaslim/config.json`) are prioritized.
-- **Confused Deputy Prevention**: Server identifiers are restricted to `^[a-zA-Z0-9_-]+$` without `__`. Tool overwrites across server boundaries are strictly rejected by the storage layer.
-- **DoS & Recursion Guards**: The token estimator safely handles deeply nested payloads and circular references without uncaught `RecursionError`.
-- **SQLite Variable Safety**: Search `limit` is capped at 20, and all batch queries (`WHERE IN`) are chunked in batches of 500 parameters.
-- **Process Timeouts**: Child server connections (`15.0s`) and tool invocations (`60.0s`) are bounded by timeouts, converting child hangs into structured `is_error=True` responses.
+- **Host Secret Isolation**: Child subprocesses do not inherit `os.environ`. Only explicitly configured environment variables are forwarded.
+- **Untrusted CWD Protection**: Loading configurations from the current working directory (`./schemaslim.json`) is blocked by default; requires explicit `--allow-cwd` or `SCHEMASLIM_ALLOW_CWD=1`.
+- **Confused Deputy Prevention**: Tool overwrites across server boundaries are strictly blocked; server IDs must match `^[a-zA-Z0-9_-]+$`.
+- **DoS & Recursion Guards**: The schema token estimator is bounded against circular structures and deeply nested schemas.
+- **SQLite Parameter Chunking**: Batch queries are split into chunks of 500 parameters to maintain compatibility across all SQLite engine limits.
+- **Process Timeouts**: Subprocess lifecycle and tool invocations are guarded by strict timeouts (15s connect, 60s execution).
 
 ---
 
-## Configuration Presets
+## Testing & Verification
 
-Pre-configured production templates are available in [`examples/`](file:///examples/):
-- **[`examples/full-stack-dev.json`](file:///examples/full-stack-dev.json)**: GitHub, Filesystem, PostgreSQL, and Memory servers.
-- **[`examples/minimal.json`](file:///examples/minimal.json)**: Minimal Filesystem and Fetch setup.
-
----
-
-## Testing
-
-Run the automated test suite (93 unit, integration, and security tests):
+Run the full automated test suite (104 unit, integration, and security tests):
 
 ```bash
 uv run pytest -v

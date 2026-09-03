@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "schemaslim"
-version = "0.1.0"
+version = "0.1.3"
 description = "Lightweight local virtualizing reverse-proxy for Model Context Protocol (MCP) to solve Tool Explosion"
 readme = "README.md"
 requires-python = ">=3.12"
