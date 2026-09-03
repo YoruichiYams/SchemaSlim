@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "description": "Local filesystem access"
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "description": "Web page markdown reader"
+    }
+  },
+  "settings": {
+    "db_path": "~/.schemaslim/index.db",
+    "top_k": 3,
+    "log_level": "INFO"
+  }
+}

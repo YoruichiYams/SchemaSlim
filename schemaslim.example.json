@@ -1,0 +1,53 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "."
+      ],
+      "env": {},
+      "enabled": true,
+      "description": "Local filesystem access tools (read, write, list files)"
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "enabled": true,
+      "description": "Web fetcher for converting HTML to clean markdown"
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_exampleToken"
+      },
+      "enabled": false,
+      "description": "GitHub repository and issues management"
+    },
+    "remote_api": {
+      "transport": "sse",
+      "url": "https://mcp.internal.example.com/sse",
+      "headers": {
+        "Authorization": "Bearer sse_secret_key"
+      },
+      "enabled": true,
+      "description": "Internal remote SSE-based microservice tools"
+    }
+  },
+  "settings": {
+    "db_path": "~/.schemaslim/index.db",
+    "embedding_model": "BAAI/bge-small-en-v1.5",
+    "similarity_threshold": 0.45,
+    "top_k": 5,
+    "max_search_results": 10,
+    "log_level": "INFO"
+  }
+}

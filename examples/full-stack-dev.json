@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schemaslim.dev/schema.json",
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "description": "GitHub repository management, PRs, issues, and commit operations"
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./project"],
+      "description": "Secure local workspace file manipulation"
+    },
+    "postgres": {
+      "command": "uvx",
+      "args": ["mcp-server-postgres", "postgresql://user:password@localhost:5432/main_db"],
+      "description": "PostgreSQL database introspection, schema extraction, and query execution"
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "description": "Knowledge graph memory server for long-term project context"
+    }
+  },
+  "settings": {
+    "db_path": "~/.schemaslim/index.db",
+    "embedding_model": "BAAI/bge-small-en-v1.5",
+    "similarity_threshold": 0.45,
+    "top_k": 3,
+    "log_level": "INFO"
+  }
+}
