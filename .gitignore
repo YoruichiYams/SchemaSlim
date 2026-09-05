@@ -63,3 +63,9 @@ schemaslim.json
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Web Archefacts
+web/node_modules/
+web/dist/
+.vercel/
+*.tsbuildinfo
