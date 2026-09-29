@@ -721,3 +721,59 @@ async def test_schemaslim_search_injects_security_metadata(tmp_path: Path):
         assert results_by_name["fs__read_file"]["security_mode"] == "ask"
     finally:
         active_store.close()
+
+
+@pytest.mark.asyncio
+async def test_blocked_tools_base_name_rejection_in_server():
+    """Verify that specifying 'delete_file' in blocked_tools blocks 'filesystem__delete_file' even if _confirmed: true."""
+    mock_pool = MagicMock()
+    mock_pool.call_tool = AsyncMock()
+
+    policy = SecurityPolicy(mode="ask", blocked_tools=["delete_file"])
+    server = VirtualMCPServer(pool=mock_pool, security_policy=policy)
+
+    params = types.CallToolRequestParams(
+        name="schemaslim_call",
+        arguments={
+            "namespaced_name": "filesystem__delete_file",
+            "arguments": {"path": "/important.txt", "_confirmed": True},
+        },
+    )
+    result = await server._handle_call_tool(None, params)
+
+    assert result.is_error is True
+    assert "Tool 'filesystem__delete_file' is blocked by security policy" in result.content[0].text
+    mock_pool.call_tool.assert_not_called()
+
+
+def test_inflected_verb_detection_in_description():
+    """Verifies descriptions containing 'Deletes records', 'Dropping tables', 'Purges cache' trigger is_destructive=True."""
+    policy = SecurityPolicy()
+
+    assert is_destructive("data__sync", description="Deletes records older than 30 days", policy=policy) is True
+    assert is_destructive("db__migration", description="Dropping tables and rebuilding schema", policy=policy) is True
+    assert is_destructive("cache__manager", description="Purges cache entries on invalidate", policy=policy) is True
+    assert is_destructive("service__task", description="Executing user tasks in isolated environment", policy=policy) is True
+    assert is_destructive("data__audit", description="Read-only query of logs without mutation", policy=policy) is False
+
+
+def test_server_name_namespace_does_not_trigger_false_positive():
+    """Verifies delete_service__get_status is NOT marked destructive."""
+    policy = SecurityPolicy()
+
+    assert is_destructive("delete_service__get_status", description="Inspect system status and metrics", policy=policy) is False
+    assert is_destructive("kill_daemon__read_health", description="Check daemon health endpoint", policy=policy) is False
+    assert is_destructive("bash_runner__get_version", description="Get version info", policy=policy) is False
+
+
+def test_expanded_destructive_patterns():
+    """Verifies tools with exec, purge, unlink, run_command are detected as destructive."""
+    policy = SecurityPolicy()
+
+    assert is_destructive("terminal__exec", policy=policy) is True
+    assert is_destructive("storage__purge", policy=policy) is True
+    assert is_destructive("fs__unlink", policy=policy) is True
+    assert is_destructive("runner__run_command", policy=policy) is True
+    assert is_destructive("os__wipe_disk", policy=policy) is True
+    assert is_destructive("git__patch_apply", policy=policy) is True
+    assert is_destructive("db__modify_schema", policy=policy) is True

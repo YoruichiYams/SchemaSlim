@@ -5,7 +5,8 @@
 **Universal MCP Virtualization & Local Hybrid Search Reverse-Proxy**
 
 [![Live Demo](https://img.shields.io/badge/Live_Demo-schemaslim.pages.dev-10b981?style=flat-square&logo=cloudflarepages&logoColor=white)](https://schemaslim.pages.dev)
-[![Tests](https://img.shields.io/badge/pytest-104_passed-emerald?style=flat-square&logo=pytest&logoColor=white)](https://schemaslim.pages.dev)
+[![PyPI](https://img.shields.io/badge/pypi-v0.2.1-blue?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/schemaslim/)
+[![Tests](https://img.shields.io/badge/pytest-145_passed-emerald?style=flat-square&logo=pytest&logoColor=white)](https://schemaslim.pages.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-zinc?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-zinc?style=flat-square&logo=python&logoColor=white)](https://python.org)
 
@@ -108,7 +109,7 @@ SchemaSlim maintains a 100% passing test suite across migration atomicity, strea
 
 ```bash
 uv run pytest
-# 104 passed in ~4.3s
+# 145 passed in ~8.2s (86% coverage)
 ```
 
 Interactive test reports and coverage breakdowns can be viewed live in the [Web Dashboard](https://schemaslim.pages.dev).

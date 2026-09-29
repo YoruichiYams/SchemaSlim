@@ -342,7 +342,11 @@ class VirtualMCPServer:
 
         # ── Security Policy Enforcement ───────────────────────────────────────
         # 1. Permanent blacklist check
-        if namespaced_name in self._security_policy.blocked_tools:
+        base_tool_name = namespaced_name.split("__")[-1]
+        if (
+            namespaced_name in self._security_policy.blocked_tools
+            or base_tool_name in self._security_policy.blocked_tools
+        ):
             return types.CallToolResult(
                 content=[
                     types.TextContent(

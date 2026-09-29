@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "schemaslim"
-version = "0.2.0"
+version = "0.2.1"
 description = "Lightweight local virtualizing reverse-proxy for Model Context Protocol (MCP) to solve Tool Explosion"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -37,6 +37,8 @@ packages = ["schemaslim"]
 exclude = [
     "/.gemini",
     "/web",
+    "/.temp_*",
+    "/scratch",
     "*.db",
     "*.bak",
     "*.env",

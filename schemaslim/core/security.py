@@ -46,15 +46,14 @@ def is_destructive(
         logger.debug("Tool '%s' matched explicit allowed_tools list.", clean_name)
         return False
 
-    # 3. Pattern evaluation against tool_name (snake_case / kebab-case / camelCase tokens)
+    # 3. Pattern evaluation strictly against base_tool_name (snake_case / kebab-case / camelCase tokens)
     tokens = [t.lower() for t in re.findall(r"[a-zA-Z0-9]+", base_tool_name) if t]
-    name_lower = clean_name.lower()
     base_lower = base_tool_name.lower()
 
     for pattern in effective_policy.destructive_patterns:
         pat_lower = pattern.lower()
 
-        # Token-level match (e.g., 'delete' in ['fs', 'delete', 'file'])
+        # Token-level match (e.g., 'delete' in ['delete', 'file'])
         if pat_lower in tokens:
             logger.debug(
                 "Tool '%s' flagged destructive: token '%s' in tool name tokens %s.",
@@ -64,40 +63,59 @@ def is_destructive(
             )
             return True
 
-        # Regex / substring match on tool name
+        # Regex / substring match strictly on base tool name
         try:
             regex = re.compile(pattern, re.IGNORECASE)
-            if regex.search(base_lower) or regex.search(name_lower):
+            if regex.search(base_lower):
                 logger.debug(
-                    "Tool '%s' flagged destructive: pattern '%s' matched tool name.",
+                    "Tool '%s' flagged destructive: pattern '%s' matched base tool name.",
                     clean_name,
                     pattern,
                 )
                 return True
         except re.error:
-            if pat_lower in base_lower or pat_lower in name_lower:
+            if pat_lower in base_lower:
                 return True
 
-    # 4. Pattern evaluation against tool description
+    # 4. Pattern evaluation against tool description and parameter descriptions
+    desc_chunks = []
     if description:
-        clean_desc = description.strip()
+        desc_chunks.append(description.strip())
+    if parameters and isinstance(parameters, dict):
+        props = parameters.get("properties")
+        if isinstance(props, dict):
+            for prop_val in props.values():
+                if isinstance(prop_val, dict) and "description" in prop_val:
+                    desc_chunks.append(str(prop_val["description"]).strip())
+        if "description" in parameters:
+            desc_chunks.append(str(parameters["description"]).strip())
+
+    combined_desc = " ".join(desc_chunks)
+    if combined_desc:
         for pattern in effective_policy.destructive_patterns:
             try:
-                # Use word boundaries for simple word patterns to prevent false positives
+                # Use flexible suffix / stemming matching for simple word patterns
+                # to catch inflected forms (e.g. 'Deletes', 'deleting', 'dropped', 'purging')
                 if re.match(r"^\w+$", pattern):
-                    regex = re.compile(r"\b" + pattern + r"\b", re.IGNORECASE)
+                    if pattern.endswith("e") and len(pattern) > 2:
+                        stem = pattern[:-1]
+                    elif pattern.endswith("y") and len(pattern) > 2:
+                        stem = pattern[:-1]
+                    else:
+                        stem = pattern
+                    regex = re.compile(r"\b" + re.escape(stem) + r"[a-z]*\b", re.IGNORECASE)
                 else:
                     regex = re.compile(pattern, re.IGNORECASE)
 
-                if regex.search(clean_desc):
+                if regex.search(combined_desc):
                     logger.debug(
-                        "Tool '%s' flagged destructive: pattern '%s' matched description.",
+                        "Tool '%s' flagged destructive: pattern '%s' matched description/parameters.",
                         clean_name,
                         pattern,
                     )
                     return True
             except re.error:
-                if pattern.lower() in clean_desc.lower():
+                if pattern.lower() in combined_desc.lower():
                     return True
 
     return False

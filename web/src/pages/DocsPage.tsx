@@ -99,7 +99,7 @@ export const DocsPage: React.FC = () => {
                   <h4>Process &amp; Secret Isolation (CWE-200)</h4>
                 </div>
                 <p className="text-xs text-zinc-400 leading-relaxed font-normal">
-                  Prevents CWE-200 environment secret leakage by stripping ambient host variables (<code className="text-zinc-300 font-mono">OPENAI_API_KEY</code>, cloud credentials) before spawning untrusted child servers. Backed by 139 automated pytest regressions.
+                  Prevents CWE-200 environment secret leakage by stripping ambient host variables (<code className="text-zinc-300 font-mono">OPENAI_API_KEY</code>, cloud credentials) before spawning untrusted child servers. Backed by 145 automated pytest regressions.
                 </p>
               </div>
             </div>

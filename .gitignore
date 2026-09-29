@@ -33,6 +33,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.temp_*/
+.temp_audit_venv/
+scratch/
 
 # Testing & Coverage
 .pytest_cache/

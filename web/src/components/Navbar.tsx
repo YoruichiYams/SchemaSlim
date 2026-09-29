@@ -99,7 +99,7 @@ export const Navbar: React.FC = () => {
             title="Inspect Pytest Suite Verification"
           >
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>139 tests pass</span>
+            <span>145 tests pass</span>
           </button>
 
           {/* White Accent Capsule Install CTA placed strictly to the LEFT of GitHub */}
@@ -122,11 +122,11 @@ export const Navbar: React.FC = () => {
           <button
             onClick={() => setTestModalOpen(true)}
             className="flex items-center gap-1 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 bg-zinc-900/80 px-2.5 py-2 rounded-full border border-zinc-800 transition-colors cursor-pointer select-none min-h-[44px]"
-            title="139 tests pass"
-            aria-label="Inspect 139 passed tests"
+            title="145 tests pass"
+            aria-label="Inspect 145 passed tests"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-semibold text-zinc-300">139</span>
+            <span className="font-semibold text-zinc-300">145</span>
           </button>
 
           {/* Mobile Hamburger Toggle with 44x44px Touch Target */}

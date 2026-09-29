@@ -79,13 +79,24 @@ export const SecurityMatrix: React.FC = () => {
       cwe: 'CWE-400: Uncontrolled Resource Consumption',
       testedBy: 'test_virtual_mcp_server_handles_tool_timeout_cleanly',
     },
+    {
+      code: 'SCHEMASLIM-SEC-07',
+      title: 'Destructive Execution Boundary & Safety Policy',
+      icon: ShieldCheck,
+      vulnerability:
+        'Blind proxy execution allows autonomous agents or prompt-injected LLMs to invoke destructive child operations (file deletion, database drops, arbitrary shell execution) without verification.',
+      mitigation:
+        'Deterministic Execution Safety Policy (permissive, ask, readonly) with 25 destructive verb stems, inflected suffix matching, namespace isolation, and base-name blocked_tools validation. Challenges agent with confirmation flow before dispatch.',
+      cwe: 'CWE-863: Incorrect Authorization',
+      testedBy: 'test_blocked_tools_base_name_rejection_in_server',
+    },
   ];
 
   return (
     <div className="space-y-8">
       {/* Audit Header Info Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-zinc-800 text-xs font-mono text-zinc-500">
-        <div>AUDIT STATUS: 6 OF 6 VECTORS HARDENED</div>
+        <div>AUDIT STATUS: 7 OF 7 VECTORS HARDENED</div>
         <div className="text-emerald-400 flex items-center gap-1.5">
           <ShieldCheck className="w-4 h-4" />
           Zero Ambient Environment Leakage Enforced

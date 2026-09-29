@@ -69,15 +69,15 @@ export const TestReportModal: React.FC<TestReportModalProps> = ({ isOpen, onClos
     },
     {
       filename: 'tests/test_security.py',
-      passedCount: 22,
-      duration: '0.72s',
-      description: 'CWE-200 env sanitization, CWD hijacking defense, destructive call boundary, safety policies (permissive/ask/readonly), _confirmed stripping',
+      passedCount: 26,
+      duration: '0.74s',
+      description: 'CWE-200 env sanitization, CWD hijacking defense, destructive call boundary, base-name blocked_tools rejection, inflected verb stemming, namespace isolation, expanded 25-verb dictionary',
     },
     {
       filename: 'tests/test_pool.py',
-      passedCount: 19,
-      duration: '0.84s',
-      description: 'MCPSessionPool lifecycle, idle process reaper, keep_alive stateful exemption, transparent on-demand revival, persistent connections, secret stripping',
+      passedCount: 21,
+      duration: '0.86s',
+      description: 'MCPSessionPool lifecycle, idle process reaper, keep_alive stateful exemption, transparent on-demand revival, concurrent revival lock protection (_revival_locks), multi-server in-flight race protection',
     },
     {
       filename: 'tests/test_storage.py',
@@ -141,7 +141,7 @@ export const TestReportModal: React.FC<TestReportModalProps> = ({ isOpen, onClos
                       Pytest Suite Verification
                     </h3>
                     <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
-                      v0.2.0
+                      v0.2.1
                     </span>
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   </div>
@@ -164,11 +164,11 @@ export const TestReportModal: React.FC<TestReportModalProps> = ({ isOpen, onClos
             <div className="px-6 py-3.5 bg-zinc-900/60 border-b border-zinc-850 flex flex-wrap items-center justify-between text-xs font-mono text-zinc-300 gap-2">
               <div className="flex items-center gap-2 text-emerald-400 font-medium">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>139 passed in 8.21s</span>
+                <span>145 passed in 8.25s</span>
               </div>
               <div className="flex items-center gap-3 text-zinc-400 text-[11px]">
                 <span className="text-zinc-500">•</span>
-                <span className="text-zinc-300">85% code coverage</span>
+                <span className="text-zinc-300">86% code coverage</span>
                 <span className="text-zinc-500">•</span>
                 <span>Python 3.12.14</span>
               </div>

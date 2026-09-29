@@ -7,6 +7,7 @@ import pytest
 from mcp import types
 
 from schemaslim.benchmark.runner import BenchmarkRunner, generate_synthetic_tools
+from schemaslim.config.models import SecurityPolicy
 from schemaslim.core.server import VirtualMCPServer, META_TOOLS
 from schemaslim.storage.models import IndexedTool
 from schemaslim.storage.vector_store import VectorStore
@@ -37,7 +38,7 @@ async def test_full_proxy_e2e_flow(tmp_path):
 
     # 2. Wire VirtualMCPServer
     tracker = TelemetryTracker()
-    server = VirtualMCPServer(tracker=tracker)
+    server = VirtualMCPServer(tracker=tracker, security_policy=SecurityPolicy(mode="permissive"))
     active_store = VectorStore(db_path=db_path)
     server._store = active_store
 

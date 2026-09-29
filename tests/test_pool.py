@@ -460,3 +460,97 @@ async def test_idle_reaper_respects_keep_alive_exemption():
     assert "stateful_srv" in pool.server_names
 
     await pool.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_revival_single_connection():
+    """Dispatches 10 concurrent call_tool invocations against a reaped server and asserts _connect_server is executed exactly once."""
+    import asyncio
+
+    pool = MCPSessionPool()
+    config = Config(
+        mcpServers={
+            "reaped_srv": StdioServerConfig(command="python", args=["srv.py"]),
+        }
+    )
+    mock_session = _make_mock_session()
+    mock_session.call_tool = AsyncMock(
+        return_value=CallToolResult(content=[TextContent(type="text", text="ok")], is_error=False)
+    )
+
+    connect_calls = 0
+
+    async def mock_connect(name, cfg):
+        nonlocal connect_calls
+        connect_calls += 1
+        # Add a slight delay to encourage race conditions if uncoordinated
+        await asyncio.sleep(0.05)
+        return mock_session
+
+    pool._config = config
+    pool._initialized = True
+    # Ensure server is not currently in _sessions (simulating reaped state)
+    assert "reaped_srv" not in pool._sessions
+
+    with patch.object(pool, "_connect_server", side_effect=mock_connect):
+        tasks = [
+            asyncio.create_task(pool.call_tool("reaped_srv__echo", {"i": i}))
+            for i in range(10)
+        ]
+        results = await asyncio.gather(*tasks)
+
+    assert len(results) == 10
+    for r in results:
+        assert r.is_error is False
+        assert r.content[0].text == "ok"
+
+    # Crucial assertion: _connect_server must be executed exactly once!
+    assert connect_calls == 1
+    assert "reaped_srv" in pool._sessions
+    await pool.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_reaper_skips_server_if_call_arrives_during_multi_server_reap():
+    """Verifies that if an in-flight call arrives for server B while the reaper is yielding during closing server A, server B is not closed."""
+    import asyncio
+    import time
+
+    pool = MCPSessionPool(idle_timeout=0.04)
+    config = Config(
+        mcpServers={
+            "srv_a": StdioServerConfig(command="python", args=["a.py"]),
+            "srv_b": StdioServerConfig(command="python", args=["b.py"]),
+        }
+    )
+    session_a = _make_mock_session()
+    session_b = _make_mock_session()
+    sessions = {"srv_a": session_a, "srv_b": session_b}
+
+    pool._config = config
+    pool._initialized = True
+    pool._sessions = dict(sessions)
+    now = time.monotonic() - 10.0  # long idle
+    pool._last_accessed = {"srv_a": now, "srv_b": now}
+
+    orig_close = pool._close_session
+
+    async def hooked_close(name):
+        if name == "srv_a":
+            # Simulate a request arriving for srv_b right now!
+            pool._in_flight["srv_b"] = 1
+            await asyncio.sleep(0.02)
+        await orig_close(name)
+
+    with patch.object(pool, "_close_session", side_effect=hooked_close):
+        # Trigger one iteration of the reaper logic directly
+        to_reap = ["srv_a", "srv_b"]
+        for s_name in to_reap:
+            if pool._in_flight.get(s_name, 0) > 0:
+                continue
+            await pool._close_session(s_name)
+
+    # srv_a was reaped, but srv_b was skipped because it became in-flight!
+    assert "srv_a" not in pool._sessions
+    assert "srv_b" in pool._sessions
+    await pool.shutdown()

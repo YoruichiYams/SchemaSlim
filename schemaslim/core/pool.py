@@ -1,6 +1,7 @@
 """Persistent session pool for managing long-lived connections to child MCP servers."""
 
 import asyncio
+from collections import defaultdict
 import sys
 import time
 from contextlib import AsyncExitStack
@@ -52,6 +53,7 @@ class MCPSessionPool:
         self._session_stacks: Dict[str, AsyncExitStack] = {}
         self._last_accessed: Dict[str, float] = {}
         self._in_flight: Dict[str, int] = {}
+        self._revival_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._exit_stack: Optional[AsyncExitStack] = None
         self._reaper_task: Optional[asyncio.Task] = None
         self._config: Optional[Config] = None
@@ -288,6 +290,9 @@ class MCPSessionPool:
                         to_reap.append(server_name)
 
                 for server_name in to_reap:
+                    if self._in_flight.get(server_name, 0) > 0:
+                        logger.debug("Skipping reaping for '%s': active in-flight request started.", server_name)
+                        continue
                     logger.info(
                         "Reaping idle session for server '%s' (idle %.1fs >= timeout %.1fs).",
                         server_name,
@@ -332,18 +337,18 @@ class MCPSessionPool:
         if server_name not in self._sessions and self._config is not None:
             active = self._config.active_servers
             if server_name in active:
-                logger.info("On-demand reviving session for server '%s'...", server_name)
-                try:
-                    session = await self._connect_server(server_name, active[server_name])
-                    self._sessions[server_name] = session
-                    if server_name not in self._session_stacks:
-                        self._session_stacks[server_name] = AsyncExitStack()
-                    self._last_accessed[server_name] = time.monotonic()
-                except Exception as exc:
-                    raise SessionCallError(
-                        f"Failed to revive session for server '{server_name}': "
-                        f"{type(exc).__name__}: {exc}"
-                    ) from exc
+                async with self._revival_locks[server_name]:
+                    if server_name not in self._sessions:
+                        logger.info("On-demand reviving session for server '%s'...", server_name)
+                        try:
+                            session = await self._connect_server(server_name, active[server_name])
+                            self._sessions[server_name] = session
+                            self._last_accessed[server_name] = time.monotonic()
+                        except Exception as exc:
+                            raise SessionCallError(
+                                f"Failed to revive session for server '{server_name}': "
+                                f"{type(exc).__name__}: {exc}"
+                            ) from exc
 
         session = self._sessions.get(server_name)
         if session is None:

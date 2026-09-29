@@ -46,7 +46,7 @@ SchemaSlim implements a strict subset of the Model Context Protocol:
 
 | JSON-RPC Method | Handler | Description |
 | :--- | :--- | :--- |
-| `initialize` | `VirtualMCPServer._handle_initialize` | Establishes client-proxy handshake. Advertises `tools: {listChanged: false}` capabilities and returns server identification (`schemaslim v0.2.0`). |
+| `initialize` | `VirtualMCPServer._handle_initialize` | Establishes client-proxy handshake. Advertises `tools: {listChanged: false}` capabilities and returns server identification (`schemaslim v0.2.1`). |
 | `tools/list` | `VirtualMCPServer._handle_list_tools` | Returns **strictly two meta-tools**: [`schemaslim_search`](file:///schemaslim/core/server.py#L125) and [`schemaslim_call`](file:///schemaslim/core/server.py#L140). Child tools are never exposed at root. |
 | `tools/call` | `VirtualMCPServer._handle_call_tool` | Routes meta-tool invocations: dispatches search queries to [`VectorStore.hybrid_search`](file:///schemaslim/storage/vector_store.py#L283) and tool executions to [`VirtualMCPServer._do_call`](file:///schemaslim/core/server.py#L225). |
 | `ping` | SDK Internal Default | Standard MCP liveness check returning an empty response object `{}`. |
@@ -115,8 +115,8 @@ sequenceDiagram
 * `call_timeout` (default: `60.0s`): Maximum time allowed for tool execution. Bounded via `asyncio.wait_for`. Timeouts return structured errors without crashing the proxy.
 * **Configurable Idle Process Reaper (`idle_timeout`):** Configured via root `idle_timeout: Optional[float]` (in seconds; e.g. `300.0` for 5 minutes).
   - When enabled, `MCPSessionPool` tracks `last_accessed` timestamps per active session and runs a background loop (`_idle_reaper_loop`) running every `min(idle_timeout / 2, 30)` seconds.
-  - Idle child processes are gracefully terminated and their transport streams closed, releasing file descriptors and RAM. Active in-flight invocations are protected.
-  - **Transparent On-Demand Revival:** If a tool call targets an active server that has been reaped, `MCPSessionPool` automatically re-spawns the child subprocess before dispatching the invocation without failing the client.
+  - Idle child processes are gracefully terminated and their transport streams closed, releasing file descriptors and RAM. Active in-flight invocations are protected. During multi-server reaping iteration, the loop re-checks in-flight counter immediately prior to closing each session to avoid tearing down active sessions.
+  - **Transparent On-Demand Revival with Lock Serialization:** If a tool call targets an active server that has been reaped, `MCPSessionPool` automatically re-spawns the child subprocess before dispatching the invocation without failing the client. To eliminate race conditions and process storms under high concurrency, on-demand connection setup is serialized via a per-server `asyncio.Lock` registry (`_revival_locks`), double-checking session presence within the lock.
   - When `idle_timeout` is `None` or `<= 0` (default), reaping is disabled and processes persist indefinitely.
   - **Per-Server Stateful Exemption (`keep_alive`):** Individual server configurations (`StdioServerConfig`, `SseServerConfig`) support `keep_alive: bool = Field(default=False)`. When set to `true`, `MCPSessionPool._idle_reaper_loop()` unconditionally skips idle termination for that server, safeguarding active database locks, transactions, git state, and REPL memory indefinitely even when global `idle_timeout` is active.
 
@@ -230,6 +230,8 @@ SchemaSlim enforces defense-in-depth across child process spawning, configuratio
 | **SCHEMASLIM-SEC-04** | Algorithmic Complexity / DoS | Deeply nested dictionary schemas (>2000 levels) and cyclic data structures in tool parameters are caught via cycle detectors and recursion clamps, preventing unhandled `RecursionError` in token estimators. | [`tests/test_security.py:L124-L149`](file:///tests/test_security.py#L124-L149) |
 | **SCHEMASLIM-SEC-05** | SQLite Variable Limit Overflow | Batch SQL operations (`DELETE WHERE id IN (...)`) are chunked in batches of 500 parameters to satisfy SQLite limits. In `schemaslim_search`, user `limit` is clamped to a maximum of 20. | [`tests/test_security.py:L152-L177`](file:///tests/test_security.py#L152-L177) |
 | **SCHEMASLIM-SEC-06** | Subprocess Execution Hangs | `asyncio.wait_for` bounds initial connection handshakes (15.0s) and tool invocations (60.0s). Errors return structured JSON-RPC responses (`is_error=True`) without crashing the proxy. | [`tests/test_security.py:L180-L215`](file:///tests/test_security.py#L180-L215) |
+| **SCHEMASLIM-SEC-07** | Destructive Execution Boundary | Permissive, Ask, and Readonly safety enforcement with `_confirmed` stripping and base-name blacklist check in `_do_call`. | [`tests/test_security.py:L218-L270`](file:///tests/test_security.py#L218-L270) |
+| **SCHEMASLIM-SEC-08** | Subprocess Revival Race Condition | Per-server `_revival_locks` (`asyncio.Lock`) serializes on-demand reconnects for reaped sessions, and multi-server idle reaping re-checks in-flight counts before closing. | [`tests/test_pool.py:L225-L275`](file:///tests/test_pool.py#L225-L275) |
 
 ### 4.2 SCHEMASLIM-SEC-07: Execution Safety Policy & Destructive Call Boundary
 
@@ -242,8 +244,8 @@ Configured in `schemaslim.json` under the `security` key:
   "security": {
     "mode": "ask",
     "destructive_patterns": [
-      "delete", "drop", "destroy", "remove", "truncate",
-      "write", "execute", "shell", "bash", "kill", "eval"
+      "delete", "drop", "destroy", "remove", "truncate", "write", "execute", "shell", "bash", "kill", "eval",
+      "exec", "run", "cmd", "terminal", "powershell", "sh", "purge", "wipe", "unlink", "rmdir", "format", "overwrite", "modify", "patch"
     ],
     "allowed_tools": ["filesystem__read_file"],
     "blocked_tools": ["bash__raw_exec"]
@@ -253,13 +255,13 @@ Configured in `schemaslim.json` under the `security` key:
 
 #### Classification Engine (`is_destructive`)
 Evaluates target tools via a deterministic 4-tier decision cascade:
-1. **Blocked Override:** If tool is in `blocked_tools`, returns `True` immediately.
-2. **Allowed Override:** If tool is in `allowed_tools`, returns `False` immediately.
-3. **Token Matching on Tool Name:** Extracts tool tokens (split on `_`, `-`, and camelCase) and matches against `destructive_patterns`.
-4. **Description Pattern Matching:** Regex word-boundary match against the tool's docstring.
+1. **Blocked Override:** If either fully qualified `namespaced_name` or `base_tool_name` is in `blocked_tools`, returns `True` immediately.
+2. **Allowed Override:** If either `namespaced_name` or `base_tool_name` is in `allowed_tools`, returns `False` immediately.
+3. **Token & Regex Matching on Base Tool Name:** Evaluates base tool name tokens strictly (ignoring the server namespace prefix to avoid false positives like `delete_service__get_status`) against `destructive_patterns`.
+4. **Description & Parameter Pattern Matching:** Evaluates tool docstrings and parameter descriptions using inflected regex stem matching (`r"\b" + re.escape(stem) + r"[a-z]*\b"`), capturing grammatical variations (`deletes`, `dropping`, `purging`, `overwrites`).
 
 #### Enforcement Modes
-* **`blocked_tools`:** Unconditionally rejected with `is_error=True`:
+* **`blocked_tools`:** Unconditionally rejected in `VirtualMCPServer._do_call` with `is_error=True` matching either full or base tool name, preventing confirmation bypass:
   `"Tool '{namespaced_name}' is blocked by security policy"`
 * **`readonly` Mode:** Any destructive tool is rejected with `is_error=True`:
   `"Execution denied: tool is destructive and security mode is 'readonly'"`
@@ -285,7 +287,7 @@ Evaluates target tools via a deterministic 4-tier decision cascade:
 
 ## 5. Empirical Quality Assurance & Test Verification
 
-The SchemaSlim codebase is verified by **139 automated regression tests** across **10 test suites** with **85% total test coverage** (measured via `pytest --cov=schemaslim --cov-report=term-missing`):
+The SchemaSlim codebase is verified by **145 automated regression tests** across **10 test suites** with **86% total test coverage** (measured via `pytest --cov=schemaslim --cov-report=term-missing`):
 
 ```text
 ============================= test session starts =============================
@@ -294,20 +296,20 @@ rootdir: C:\Users\Gleb\Desktop\ㅤ\Workspace\SchemaSlim
 configfile: pyproject.toml
 testpaths: tests
 plugins: anyio-4.15.0, asyncio-1.4.0, cov-7.1.0
-collected 139 items
+collected 145 items
 
 tests\test_cli.py ..................                                     [ 12%]
-tests\test_config.py .......................                             [ 29%]
-tests\test_e2e.py .....                                                  [ 33%]
-tests\test_harvester.py ....                                             [ 35%]
-tests\test_migrator.py .........                                         [ 42%]
-tests\test_pool.py ...................                                   [ 56%]
-tests\test_security.py ......................                            [ 71%]
-tests\test_server.py ................                                    [ 83%]
-tests\test_storage.py .........                                          [ 89%]
+tests\test_config.py .......................                             [ 28%]
+tests\test_e2e.py .....                                                  [ 31%]
+tests\test_harvester.py ....                                             [ 34%]
+tests\test_migrator.py .........                                         [ 40%]
+tests\test_pool.py .....................                                 [ 55%]
+tests\test_security.py ..........................                        [ 73%]
+tests\test_server.py ................                                    [ 84%]
+tests\test_storage.py .........                                          [ 90%]
 tests\test_telemetry.py ..............                                   [100%]
 
-============================= 139 passed in 8.21s =============================
+============================= 145 passed in 8.25s =============================
 ```
 
 ### 5.1 Test Suite Breakdown
@@ -316,15 +318,15 @@ tests\test_telemetry.py ..............                                   [100%]
 | :--- | :---: | :--- | :--- |
 | [`tests/test_config.py`](file:///tests/test_config.py) | **23** | `schemaslim.config.*` | Pydantic model validation, idle_timeout parsing, `keep_alive` flag, Claude Desktop transport inference, UTF-8 BOM decoding, CLI flags. |
 | [`tests/test_cli.py`](file:///tests/test_cli.py) | **18** | `schemaslim.cli`, `ui.menu` | Typer CLI argument parsing, subcommands (`version`, `stats`, `search`, `benchmark`, `wrap`, `unwrap`), error branches, non-interactive flags (`--yes`, `--force`), interactive keypress simulation (`_read_key`, `prompt_confirmation`, `select_option`). |
-| [`tests/test_security.py`](file:///tests/test_security.py) | **22** | `schemaslim.core.security`, `server` | CWE-200 env sanitization, CWD hijacking, token DoS, SQLite limits, and SCHEMASLIM-SEC-07 confirmation flow. |
-| [`tests/test_pool.py`](file:///tests/test_pool.py) | **19** | `schemaslim.core.pool` | `MCPSessionPool` lifecycle, idle process reaper, `keep_alive` stateful exemption, transparent on-demand revival, persistent connections, secret stripping. |
+| [`tests/test_security.py`](file:///tests/test_security.py) | **26** | `schemaslim.core.security`, `server` | CWE-200 env sanitization, CWD hijacking, token DoS, SQLite limits, SCHEMASLIM-SEC-07 confirmation flow, base-name blocked_tools rejection, inflected verb stemming, namespace isolation, expanded 25-verb dictionary. |
+| [`tests/test_pool.py`](file:///tests/test_pool.py) | **21** | `schemaslim.core.pool` | `MCPSessionPool` lifecycle, idle process reaper, `keep_alive` stateful exemption, transparent on-demand revival, concurrent revival lock protection (`_revival_locks`), multi-server reaper in-flight race protection, format validation. |
 | [`tests/test_server.py`](file:///tests/test_server.py) | **16** | `schemaslim.core.server` | stdio JSON-RPC proxying, dynamic schemas, stdout stream purity, meta-tools dispatch. |
 | [`tests/test_telemetry.py`](file:///tests/test_telemetry.py) | **14** | `schemaslim.telemetry.*` | Stderr live telemetry formatting, token estimators, circular buffer thread-safety. |
 | [`tests/test_storage.py`](file:///tests/test_storage.py) | **9** | `schemaslim.storage.*` | `sqlite-vec` 384d cosine embeddings, SQLite FTS5 BM25 lexical matches, idempotent hashing. |
 | [`tests/test_migrator.py`](file:///tests/test_migrator.py) | **9** | `schemaslim.config.migrator` | UTF-8 BOM decoding, atomic writes, automatic `.schemaslim.bak` backup rollbacks. |
 | [`tests/test_e2e.py`](file:///tests/test_e2e.py) | **5** | Full Pipeline Integration | Full client-to-child proxy flow, synthetic benchmark runner, JSON/table report validation. |
 | [`tests/test_harvester.py`](file:///tests/test_harvester.py) | **4** | `schemaslim.core.harvester` | Subprocess stdio and SSE harvesting, parallel worker isolation, `/sse` fallback probing. |
-| **TOTAL** | **139** | **Full System Surface** | **100% Passing Status, 85% Coverage** |
+| **TOTAL** | **145** | **Full System Surface** | **100% Passing Status, 86% Coverage** |
 
 ---
 
