@@ -38,6 +38,13 @@ class TestConfigModels:
         assert cfg.settings.top_k == 7
         assert cfg.settings.log_level == "DEBUG"
 
+    def test_config_idle_timeout_parsing(self):
+        cfg = Config.model_validate({"mcpServers": {}, "idle_timeout": 300.0})
+        assert cfg.idle_timeout == 300.0
+
+        cfg_default = Config.model_validate({"mcpServers": {}})
+        assert cfg_default.idle_timeout is None
+
     def test_claude_desktop_style_transport_inference(
         self, claude_style_config_dict: Dict[str, Any]
     ):
@@ -117,6 +124,17 @@ class TestConfigLoader:
         loaded_cfg = load_config(saved_path)
         assert len(loaded_cfg.mcpServers) == len(original_cfg.mcpServers)
         assert loaded_cfg.settings.top_k == original_cfg.settings.top_k
+
+    def test_load_utf8_bom_file(self, tmp_path: Path, valid_config_dict: Dict[str, Any]):
+        """Verify that files saved with UTF-8 BOM (\xef\xbb\xbf) are parsed cleanly."""
+        bom_file = tmp_path / "bom_config.json"
+        raw_json = json.dumps(valid_config_dict)
+        bom_bytes = b"\xef\xbb\xbf" + raw_json.encode("utf-8")
+        bom_file.write_bytes(bom_bytes)
+
+        cfg = load_config(bom_file)
+        assert isinstance(cfg, Config)
+        assert len(cfg.mcpServers) == len(valid_config_dict["mcpServers"])
 
 
 class TestCliCommands:

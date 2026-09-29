@@ -473,6 +473,35 @@ class VectorStore:
             )
         return tools
 
+    def get_tool(self, namespaced_name: str) -> Optional[IndexedTool]:
+        """Fetch a single indexed tool by namespaced_name."""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            SELECT server_name, tool_name, namespaced_name, description,
+                   raw_schema_json, schema_hash, text_for_embedding
+            FROM tools_metadata
+            WHERE namespaced_name = ?
+            """,
+            (namespaced_name,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        try:
+            params = json.loads(row["raw_schema_json"])
+        except Exception:
+            params = {}
+        return IndexedTool(
+            server_name=row["server_name"],
+            tool_name=row["tool_name"],
+            namespaced_name=row["namespaced_name"],
+            description=row["description"],
+            parameters=params,
+            schema_hash=row["schema_hash"],
+            text_for_embedding=row["text_for_embedding"],
+        )
+
     def close(self) -> None:
         """Close SQLite database connection."""
         if hasattr(self, "_conn") and self._conn:

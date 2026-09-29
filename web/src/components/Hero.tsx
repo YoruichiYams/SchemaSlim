@@ -87,7 +87,7 @@ export const Hero: React.FC<HeroProps> = ({ onExploreClick }) => {
             <div className="inline-flex flex-wrap items-center justify-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-400 mb-6">
               <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                v0.1.0 Ready
+                v0.2.0 Ready
               </span>
               <span className="text-zinc-700">•</span>
               <span>100% Local</span>
@@ -261,7 +261,7 @@ export const Hero: React.FC<HeroProps> = ({ onExploreClick }) => {
                         <div><span className="text-zinc-600">status  ›</span> <span className="text-emerald-400 font-semibold">Virtualization Active (<span className="text-white font-semibold">schemaslim</span> <span className="text-white font-semibold">serve</span> <span className="text-zinc-400">--tui</span>)</span></div>
                       </div>
                       <div className="mt-2 text-emerald-400 text-xs font-semibold flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Virtualization complete. Restart client to reclaim <span className="text-white font-bold">85%+ prompt tokens</span> (<span className="text-emerald-300">104 passed</span>).
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Virtualization complete. Restart client to reclaim <span className="text-white font-bold">85%+ prompt tokens</span> (<span className="text-emerald-300">139 passed</span>).
                       </div>
                     </div>
                   )}
@@ -338,7 +338,7 @@ export const Hero: React.FC<HeroProps> = ({ onExploreClick }) => {
                     <div>
                       <span className="text-zinc-500 inline-block w-20">security</span>
                       <span className="text-zinc-600 mr-2">›</span>
-                      <span className="text-emerald-400 font-semibold">Protected</span> • <span className="text-rose-400 font-medium">CWD Blocked</span> (<span className="text-rose-300 font-mono">CWE-426</span>) • <span className="text-emerald-400 font-medium">104 passed</span>
+                      <span className="text-emerald-400 font-semibold">Protected</span> • <span className="text-rose-400 font-medium">CWD Blocked</span> (<span className="text-rose-300 font-mono">CWE-426</span>) • <span className="text-emerald-400 font-medium">139 passed</span>
                     </div>
                     <div>
                       <span className="text-zinc-500 inline-block w-20">db</span>

@@ -35,6 +35,10 @@ class StdioServerConfig(BaseModel):
     description: Optional[str] = Field(
         default=None, description="Human-readable server description"
     )
+    keep_alive: bool = Field(
+        default=False,
+        description="Whether to exempt this server from idle process reaping (for stateful connections)",
+    )
 
     @field_validator("command")
     @classmethod
@@ -60,6 +64,10 @@ class SseServerConfig(BaseModel):
     )
     description: Optional[str] = Field(
         default=None, description="Human-readable server description"
+    )
+    keep_alive: bool = Field(
+        default=False,
+        description="Whether to exempt this server from idle process reaping (for stateful connections)",
     )
 
 
@@ -131,8 +139,46 @@ class SchemaSlimSettings(BaseModel):
         return Path(self.db_path).expanduser().resolve()
 
 
+DEFAULT_DESTRUCTIVE_PATTERNS: List[str] = [
+    "delete",
+    "drop",
+    "destroy",
+    "remove",
+    "truncate",
+    "write",
+    "execute",
+    "shell",
+    "bash",
+    "kill",
+    "eval",
+]
+
+
+class SecurityPolicy(BaseModel):
+    """Execution safety policy governing destructive and mutating tool calls."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    mode: Literal["permissive", "ask", "readonly"] = Field(
+        default="ask",
+        description="Enforcement mode: 'permissive' (unrestricted), 'ask' (confirmation required), or 'readonly' (blocked)",
+    )
+    destructive_patterns: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_DESTRUCTIVE_PATTERNS),
+        description="Regex patterns matching mutating or destructive actions",
+    )
+    allowed_tools: List[str] = Field(
+        default_factory=list,
+        description="List of full tool names (server__tool) explicitly exempted from restrictions",
+    )
+    blocked_tools: List[str] = Field(
+        default_factory=list,
+        description="List of full tool names permanently denied execution",
+    )
+
+
 class Config(BaseModel):
-    """Root configuration containing MCP server definitions and SchemaSlim settings."""
+    """Root configuration containing MCP server definitions, settings, and security policy."""
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -143,6 +189,14 @@ class Config(BaseModel):
     settings: SchemaSlimSettings = Field(
         default_factory=SchemaSlimSettings,
         description="SchemaSlim engine settings",
+    )
+    security: SecurityPolicy = Field(
+        default_factory=SecurityPolicy,
+        description="Execution safety policy for tool calls",
+    )
+    idle_timeout: Optional[float] = Field(
+        default=None,
+        description="Optional idle timeout in seconds before reaping inactive child processes. None or <= 0 disables reaping.",
     )
 
     @model_validator(mode="before")

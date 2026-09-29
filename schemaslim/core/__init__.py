@@ -2,6 +2,7 @@
 
 from schemaslim.core.harvester import SchemaHarvester
 from schemaslim.core.pool import MCPSessionPool, SessionCallError, SessionNotFoundError
+from schemaslim.core.security import is_destructive
 from schemaslim.core.server import VirtualMCPServer
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "SessionCallError",
     "SessionNotFoundError",
     "VirtualMCPServer",
+    "is_destructive",
 ]

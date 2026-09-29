@@ -88,7 +88,7 @@ export const DocsPage: React.FC = () => {
                   <h4>Sub-60ms Hybrid Vector Retrieval</h4>
                 </div>
                 <p className="text-xs text-zinc-400 leading-relaxed font-normal">
-                  100% offline FastEmbed (ONNX BGE-small-en-v1.5 384d) dense vectors combined with SQLite FTS5 BM25 lexical ranking. Reciprocal Rank Fusion (RRF) evaluates tool relevance without external cloud API calls or network latency.
+                  100% offline FastEmbed (ONNX BGE-small-en-v1.5 384d) dense vectors combined with SQLite FTS5 BM25 lexical ranking. Weighted Linear Hybrid Scoring (0.70 dense + 0.30 sparse, k=20, threshold=0.45) evaluates tool relevance without external cloud API calls or network latency.
                 </p>
               </div>
 
@@ -99,7 +99,7 @@ export const DocsPage: React.FC = () => {
                   <h4>Process &amp; Secret Isolation (CWE-200)</h4>
                 </div>
                 <p className="text-xs text-zinc-400 leading-relaxed font-normal">
-                  Prevents CWE-200 environment secret leakage by stripping ambient host variables (<code className="text-zinc-300 font-mono">OPENAI_API_KEY</code>, cloud credentials) before spawning untrusted child servers. Backed by 104 automated pytest regressions.
+                  Prevents CWE-200 environment secret leakage by stripping ambient host variables (<code className="text-zinc-300 font-mono">OPENAI_API_KEY</code>, cloud credentials) before spawning untrusted child servers. Backed by 139 automated pytest regressions.
                 </p>
               </div>
             </div>

@@ -1,7 +1,10 @@
 """Schema harvester for querying external MCP servers and extracting tool definitions."""
 
 import asyncio
+import sys
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
@@ -106,33 +109,63 @@ class SchemaHarvester:
         config: SseServerConfig,
         timeout: float,
     ) -> List[IndexedTool]:
-        """Harvest tools via SSE/HTTP network transport."""
+        """Harvest tools via SSE/HTTP network transport with fallback and error reporting."""
         url_str = str(config.url)
         headers = dict(config.headers) if config.headers else None
 
-        logger.debug("Connecting to SSE server '%s' at %s...", server_name, url_str)
+        # Build candidate URLs (auto-probe /sse suffix if base URL has no path)
+        candidate_urls = [url_str]
+        parsed = urlparse(url_str)
+        if (not parsed.path or parsed.path == "/") and not url_str.rstrip("/").endswith("/sse"):
+            candidate_urls.append(url_str.rstrip("/") + "/sse")
 
-        async def _run_sse_session() -> List[IndexedTool]:
-            async with sse_client(
-                url=url_str,
-                headers=headers,
-                timeout=min(5.0, timeout),
-            ) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    response = await session.list_tools()
-                    tools = [
-                        IndexedTool.from_mcp_tool(server_name, t)
-                        for t in response.tools
-                    ]
-                    logger.info(
-                        "Harvested %d tools from SSE server '%s'.",
-                        len(tools),
+        last_err: Optional[Exception] = None
+        for current_url in candidate_urls:
+            logger.debug("Connecting to SSE server '%s' at %s...", server_name, current_url)
+
+            async def _run_sse_session(target_url: str) -> List[IndexedTool]:
+                async with sse_client(
+                    url=target_url,
+                    headers=headers,
+                    timeout=min(5.0, timeout),
+                ) as (read_stream, write_stream):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        response = await session.list_tools()
+                        tools = [
+                            IndexedTool.from_mcp_tool(server_name, t)
+                            for t in response.tools
+                        ]
+                        logger.info(
+                            "Harvested %d tools from SSE server '%s' at %s.",
+                            len(tools),
+                            server_name,
+                            target_url,
+                        )
+                        return tools
+
+            try:
+                return await asyncio.wait_for(_run_sse_session(current_url), timeout=timeout)
+            except (httpx.HTTPError, TimeoutError, asyncio.TimeoutError, Exception) as exc:
+                last_err = exc
+                if current_url != candidate_urls[-1]:
+                    logger.debug(
+                        "SSE connection to '%s' failed at %s (%s). Trying fallback %s...",
                         server_name,
+                        current_url,
+                        exc,
+                        candidate_urls[-1],
                     )
-                    return tools
+                    continue
 
-        return await asyncio.wait_for(_run_sse_session(), timeout=timeout)
+                # Final candidate failed: emit clean error reason to stderr
+                err_detail = f"SSE server '{server_name}' at {current_url} unreachable: {type(exc).__name__}: {exc}"
+                sys.stderr.write(f"[schemaslim] {err_detail}\n")
+                sys.stderr.flush()
+                logger.error(err_detail)
+                raise last_err from exc
+
+        raise last_err or RuntimeError(f"Failed to harvest SSE server '{server_name}'")
 
     async def harvest_all(
         self,

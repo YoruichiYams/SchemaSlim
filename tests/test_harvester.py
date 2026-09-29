@@ -107,3 +107,36 @@ async def test_harvest_all_with_server_failure():
     assert tools[0].namespaced_name == "healthy__ping"
     assert "faulty" in failures
     assert "RuntimeError" in failures["faulty"]
+
+
+@pytest.mark.asyncio
+async def test_harvest_sse_server_auto_fallback_path(sample_mcp_tools):
+    """Verify that harvesting automatically retries with /sse when base URL fails."""
+    import httpx
+    harvester = SchemaHarvester()
+    sse_cfg = SseServerConfig(url="https://mcp.motion.dev")
+
+    mock_session = MagicMock()
+    mock_session.initialize = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.tools = sample_mcp_tools[:1]
+    mock_session.list_tools = AsyncMock(return_value=mock_response)
+
+    calls = []
+
+    def mock_sse_client(url, headers=None, timeout=None):
+        calls.append(url)
+        if url in ("https://mcp.motion.dev/", "https://mcp.motion.dev"):
+            # Simulate 405 Method Not Allowed on root URL
+            request = httpx.Request("GET", url)
+            response = httpx.Response(405, request=request)
+            raise httpx.HTTPStatusError("Client error 405", request=request, response=response)
+        return DummyAsyncContextManager((None, None))
+
+    with patch("schemaslim.core.harvester.sse_client", side_effect=mock_sse_client), \
+         patch("schemaslim.core.harvester.ClientSession", return_value=DummyAsyncContextManager(mock_session)):
+        tools = await harvester.harvest_server("motion", sse_cfg)
+
+    assert len(tools) == 1
+    assert tools[0].namespaced_name == "motion__read_file"
+    assert calls == ["https://mcp.motion.dev/", "https://mcp.motion.dev/sse"]

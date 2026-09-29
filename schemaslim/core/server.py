@@ -9,8 +9,10 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-from schemaslim.config.models import Config
+from schemaslim import __version__
+from schemaslim.config.models import Config, SecurityPolicy
 from schemaslim.core.pool import MCPSessionPool, SessionCallError, SessionNotFoundError
+from schemaslim.core.security import is_destructive
 from schemaslim.storage.vector_store import VectorStore
 from schemaslim.telemetry import (
     ProxyEvent,
@@ -87,11 +89,23 @@ class VirtualMCPServer:
         self,
         tracker: Optional[TelemetryTracker] = None,
         pool: Optional[MCPSessionPool] = None,
+        security_policy: Optional[SecurityPolicy] = None,
     ) -> None:
         self._pool: MCPSessionPool = pool or MCPSessionPool()
         self._store: VectorStore | None = None
         self._tracker: TelemetryTracker = tracker or get_tracker()
         self._baseline_tokens: int = 0
+        self._security_policy: SecurityPolicy = security_policy or SecurityPolicy()
+
+    @property
+    def security_policy(self) -> SecurityPolicy:
+        """Return the active security execution policy."""
+        return self._security_policy
+
+    @security_policy.setter
+    def security_policy(self, policy: SecurityPolicy) -> None:
+        """Set the active security execution policy."""
+        self._security_policy = policy
 
     def _get_baseline_tokens(self) -> int:
         """Get or compute baseline token footprint for all available tools."""
@@ -264,6 +278,12 @@ class VirtualMCPServer:
         formatted = []
         for res in results:
             tool = res.tool
+            tool_destr = is_destructive(
+                tool_name=tool.namespaced_name,
+                description=tool.description,
+                parameters=tool.parameters,
+                policy=self._security_policy,
+            )
             formatted.append(
                 {
                     "namespaced_name": tool.namespaced_name,
@@ -272,12 +292,15 @@ class VirtualMCPServer:
                     "description": tool.description,
                     "parameters": tool.parameters,
                     "relevance_score": res.score,
+                    "is_destructive": tool_destr,
+                    "security_mode": self._security_policy.mode,
                 }
             )
 
         payload = {
             "query": query,
             "count": len(formatted),
+            "security_mode": self._security_policy.mode,
             "results": formatted,
         }
 
@@ -317,6 +340,78 @@ class VirtualMCPServer:
                 is_error=True,
             )
 
+        # ── Security Policy Enforcement ───────────────────────────────────────
+        # 1. Permanent blacklist check
+        if namespaced_name in self._security_policy.blocked_tools:
+            return types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text=f"Tool '{namespaced_name}' is blocked by security policy",
+                    )
+                ],
+                is_error=True,
+            )
+
+        # 2. Classify whether target tool is destructive/mutating
+        tool_desc = ""
+        tool_params = {}
+        if self._store is not None:
+            try:
+                indexed_tool = self._store.get_tool(namespaced_name)
+                if indexed_tool is not None:
+                    tool_desc = indexed_tool.description
+                    tool_params = indexed_tool.parameters
+            except Exception:
+                pass
+
+        tool_destructive = is_destructive(
+            tool_name=namespaced_name,
+            description=tool_desc,
+            parameters=tool_params,
+            policy=self._security_policy,
+        )
+
+        # 3. Readonly mode check
+        if self._security_policy.mode == "readonly" and tool_destructive:
+            return types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text="Execution denied: tool is destructive and security mode is 'readonly'",
+                    )
+                ],
+                is_error=True,
+            )
+
+        # 4. Ask mode confirmation check
+        if self._security_policy.mode == "ask" and tool_destructive:
+            is_confirmed = False
+            if isinstance(tool_arguments, dict) and tool_arguments.get("_confirmed") is True:
+                is_confirmed = True
+            elif arguments.get("_confirmed") is True:
+                is_confirmed = True
+
+            if not is_confirmed:
+                return types.CallToolResult(
+                    content=[
+                        types.TextContent(
+                            type="text",
+                            text=(
+                                f"Security Warning: Tool '{namespaced_name}' has been flagged as "
+                                "destructive/mutating. To execute, the caller must re-invoke "
+                                "schemaslim_call with '_confirmed': true in arguments."
+                            ),
+                        )
+                    ],
+                    is_error=True,
+                )
+
+        # Strip _confirmed before passing payload to child MCP session
+        if isinstance(tool_arguments, dict) and "_confirmed" in tool_arguments:
+            tool_arguments = dict(tool_arguments)
+            tool_arguments.pop("_confirmed", None)
+
         try:
             result = await self._pool.call_tool(namespaced_name, tool_arguments)
             return result
@@ -350,19 +445,21 @@ class VirtualMCPServer:
         """Start the virtualizing MCP server over stdin/stdout.
 
         Lifecycle:
-          1. Open VectorStore for search and calculate baseline tokens.
-          2. Optionally start live TUI dashboard on stderr.
-          3. Initialize MCPSessionPool with persistent child connections.
-          4. Run the MCP server over stdio transport.
-          5. On exit, shut down pool, stop dashboard, and close VectorStore.
+          1. Apply SecurityPolicy from config.
+          2. Open VectorStore for search and calculate baseline tokens.
+          3. Optionally start live TUI dashboard on stderr.
+          4. Initialize MCPSessionPool with persistent child connections.
+          5. Run the MCP server over stdio transport.
+          6. On exit, shut down pool, stop dashboard, and close VectorStore.
 
         Args:
             config: SchemaSlim root configuration.
             enable_tui: If True, renders live Rich dashboard exclusively to stderr.
         """
+        self._security_policy = config.security
         server = Server(
             name="schemaslim",
-            version="0.1.0",
+            version=__version__,
             instructions=(
                 "SchemaSlim is a virtualizing proxy for MCP tools. "
                 "Use schemaslim_search to discover tools by intent, "

@@ -130,7 +130,7 @@ def load_config(
     logger.debug("Loading configuration from: %s", config_path)
 
     try:
-        content = config_path.read_text(encoding="utf-8")
+        content = config_path.read_text(encoding="utf-8-sig")
     except Exception as e:
         raise ConfigError(f"Failed to read configuration file {config_path}: {e}") from e
 

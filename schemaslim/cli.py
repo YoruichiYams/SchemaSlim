@@ -1,13 +1,14 @@
-"""Typer command-line interface for SchemaSlim."""
+"""Typer command-line interface for SchemaSlim with minimalist reference design."""
 
+import asyncio
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
+
 import typer
 from rich.console import Console
-from rich.panel import Panel
 from rich.syntax import Syntax
-from rich.table import Table
+from rich.theme import Theme
 
 # Ensure UTF-8 stream handling on Windows to prevent UnicodeEncodeError in non-ASCII paths
 if sys.platform == "win32":
@@ -16,7 +17,6 @@ if sys.platform == "win32":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-import asyncio
 from schemaslim import __version__
 from schemaslim.config.loader import (
     ConfigError,
@@ -27,9 +27,24 @@ from schemaslim.config.loader import (
     load_config,
     save_config,
 )
+from schemaslim.config.migrator import ConfigMigrator, MigrationError
 from schemaslim.core.harvester import SchemaHarvester
 from schemaslim.storage.vector_store import VectorStore
 from schemaslim.utils.logger import setup_logger
+
+# Reference aesthetic theme: clean white, dim gray, quiet green
+monochrome_theme = Theme(
+    {
+        "info": "dim white",
+        "warning": "dim yellow",
+        "error": "red",
+        "success": "green",
+        "header": "bold white",
+        "key": "dim",
+        "val": "white",
+        "muted": "bright_black",
+    }
+)
 
 app = typer.Typer(
     name="schemaslim",
@@ -43,13 +58,51 @@ config_app = typer.Typer(
 )
 app.add_typer(config_app, name="config")
 
-console = Console(legacy_windows=False)
+console = Console(theme=monochrome_theme, legacy_windows=False)
+
+
+def print_section(
+    title: str,
+    lines: List[Tuple[str, str]],
+    width: int = 58,
+    footer: Optional[str] = None,
+) -> None:
+    """Render a clean section block in the SchemaSlim reference aesthetic."""
+    prefix = f"◆ {title} "
+    remaining = max(3, width - len(prefix))
+    console.print(f"[bold white]{prefix}[/bold white][dim]{'─' * remaining}[/dim]")
+    for key, val in lines:
+        console.print(f"  [dim]{key:<7}[/dim] [dim]›[/dim] {val}")
+    if footer:
+        console.print(f"\n  {footer}")
+    console.print()
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        console.print(f"[bold white]SchemaSlim[/bold white] [dim]v{__version__}[/dim]")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-V",
+        help="Print SchemaSlim version information and exit.",
+        callback=version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """SchemaSlim: Lightweight local virtualizing reverse-proxy for Model Context Protocol (MCP)."""
+    pass
 
 
 @app.command(name="version")
 def version() -> None:
     """Print SchemaSlim version information."""
-    console.print(f"[bold cyan]SchemaSlim[/bold cyan] version [bold green]{__version__}[/bold green]")
+    console.print(f"[bold white]SchemaSlim[/bold white] [dim]v{__version__}[/dim]")
 
 
 @config_app.command(name="validate")
@@ -74,52 +127,40 @@ def validate_config_cmd(
         cfg = load_config(path, allow_cwd=allow_cwd)
         found_path = find_config_file(path, allow_cwd=allow_cwd)
     except ConfigNotFoundError as e:
-        console.print(f"[bold red]Configuration Not Found:[/bold red] {e}")
+        console.print(f"[red]Configuration Not Found:[/red] {e}")
         raise typer.Exit(code=1)
     except ConfigValidationError as e:
-        console.print(
-            Panel(
-                f"[bold red]Validation Error[/bold red]\n\n{e}",
-                title="Configuration Error",
-                border_style="red",
-            )
-        )
+        console.print(f"[red]Validation Error:[/red] {e}")
         raise typer.Exit(code=1)
     except ConfigError as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
+        console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
-    # Summary table
-    table = Table(title=f"Configuration Valid: {found_path.name}", border_style="green")
-    table.add_column("Property", style="bold cyan")
-    table.add_column("Value", style="white")
+    active_cnt = len(cfg.active_servers)
+    disabled_cnt = len(cfg.mcpServers) - active_cnt
 
-    table.add_row("Config File", str(found_path))
-    table.add_row("Total Servers", str(len(cfg.mcpServers)))
-    table.add_row("Active Servers", str(len(cfg.active_servers)))
-    table.add_row("Embedding Model", cfg.settings.embedding_model)
-    table.add_row("Vector DB Path", str(cfg.settings.resolved_db_path))
-    table.add_row("Top K", str(cfg.settings.top_k))
-    table.add_row("Similarity Threshold", str(cfg.settings.similarity_threshold))
-
-    console.print(table)
+    print_section(
+        title=f"Configuration Valid: {found_path.name}",
+        lines=[
+            ("file", str(found_path)),
+            ("mcp", f"{active_cnt} active  •  0 errors  •  {disabled_cnt} disabled"),
+            ("embed", f"{cfg.settings.embedding_model} (384d)"),
+            ("db", str(cfg.settings.resolved_db_path)),
+            ("search", f"top_k: {cfg.settings.top_k}  •  threshold: {cfg.settings.similarity_threshold}"),
+        ],
+    )
 
     if verbose and cfg.mcpServers:
-        server_table = Table(title="Configured MCP Servers", border_style="cyan")
-        server_table.add_column("Name", style="bold yellow")
-        server_table.add_column("Transport", style="magenta")
-        server_table.add_column("Target / Command", style="white")
-        server_table.add_column("Status", style="green")
-
+        prefix = "◆ Configured MCP Servers "
+        console.print(f"[bold white]{prefix}[/bold white][dim]{'─' * max(3, 58 - len(prefix))}[/dim]")
         for name, s_cfg in cfg.mcpServers.items():
             transport = s_cfg.transport
             target = s_cfg.command if transport == "stdio" else str(s_cfg.url)
-            status = "[green]Enabled[/green]" if s_cfg.enabled else "[dim red]Disabled[/dim red]"
-            server_table.add_row(name, transport, target, status)
+            status = "[green]active[/green]" if s_cfg.enabled else "[dim]disabled[/dim]"
+            console.print(f"  [dim]{name:<10}[/dim] [dim]›[/dim] {transport}  •  {target}  •  {status}")
+        console.print()
 
-        console.print(server_table)
-
-    console.print("[bold green]✓ Configuration is valid and ready for use.[/bold green]")
+    console.print("[green]✓ Configuration is valid and ready for use.[/green]")
 
 
 @config_app.command(name="show")
@@ -139,36 +180,41 @@ def show_config_cmd(
         cfg = load_config(path, allow_cwd=allow_cwd)
         found_path = find_config_file(path, allow_cwd=allow_cwd)
     except Exception as e:
-        console.print(f"[bold red]Failed to load configuration:[/bold red] {e}")
+        console.print(f"[red]Failed to load configuration:[/red] {e}")
         raise typer.Exit(code=1)
 
+    prefix = f"◆ CONFIG: {found_path.name} "
+    console.print(f"[bold white]{prefix}[/bold white][dim]{'─' * max(3, 58 - len(prefix))}[/dim]")
     json_str = cfg.model_dump_json(indent=2, by_alias=True)
-    syntax = Syntax(json_str, "json", theme="monokai", line_numbers=True)
-    console.print(Panel(syntax, title=f"Config: {found_path}", border_style="blue"))
+    syntax = Syntax(json_str, "json", theme="monokai", line_numbers=False)
+    console.print(syntax)
+    console.print()
 
 
 @config_app.command(name="init")
 def init_config_cmd(
-    path: Path = typer.Argument(
-        Path("schemaslim.json"),
-        help="Target path to create template configuration.",
+    path: Optional[Path] = typer.Argument(
+        None,
+        help="Path where starter schemaslim.json will be generated. Default: ./schemaslim.json",
     ),
-    overwrite: bool = typer.Option(
-        False, "--force", "-f", help="Overwrite existing configuration file."
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Overwrite existing configuration file if present."
     ),
 ) -> None:
-    """Generate a starter schemaslim.json configuration file."""
-    resolved = path.resolve()
-    if resolved.is_file() and not overwrite:
+    """Generate a starter schemaslim.json template with example server definitions."""
+    target = path or Path("schemaslim.json")
+    resolved = target.resolve()
+
+    if resolved.exists() and not force:
         console.print(
-            f"[bold yellow]File already exists:[/bold yellow] {resolved}\n"
-            f"Use [bold]--force[/bold] to overwrite."
+            f"[dim yellow]File already exists:[/dim yellow] {resolved}\n"
+            "Use [bold]--force[/bold] to overwrite."
         )
         raise typer.Exit(code=1)
 
     starter = create_default_config()
     saved = save_config(starter, resolved)
-    console.print(f"[bold green]✓ Created starter configuration at:[/bold green] {saved}")
+    console.print(f"[green]✓ Created starter configuration at:[/green] {saved}")
 
 
 @app.command(name="index")
@@ -194,39 +240,34 @@ def index_cmd(
     try:
         cfg = load_config(config_path, allow_cwd=allow_cwd)
     except Exception as e:
-        console.print(f"[bold red]Failed to load configuration:[/bold red] {e}")
+        console.print(f"[red]Failed to load configuration:[/red] {e}")
         raise typer.Exit(code=1)
 
     active_count = len(cfg.active_servers)
     if active_count == 0:
-        console.print("[bold yellow]No active MCP servers found in configuration.[/bold yellow]")
+        console.print("[dim]No active MCP servers found in configuration.[/dim]")
         raise typer.Exit(code=0)
 
-    console.print(
-        f"[bold cyan]Harvesting schemas from {active_count} active MCP servers...[/bold cyan]"
-    )
+    console.print(f"[dim]Harvesting schemas from {active_count} active MCP servers...[/dim]")
 
     harvester = SchemaHarvester()
     tools, failures = asyncio.run(harvester.harvest_all(cfg))
 
     if failures:
-        fail_table = Table(title="Server Harvesting Errors", border_style="red")
-        fail_table.add_column("Server", style="bold red")
-        fail_table.add_column("Error Message", style="yellow")
+        prefix = "◆ SERVER HARVESTING ERRORS "
+        console.print(f"[bold red]{prefix}[/bold red][dim]{'─' * max(3, 58 - len(prefix))}[/dim]")
         for s_name, err in failures.items():
-            fail_table.add_row(s_name, err)
-        console.print(fail_table)
+            console.print(f"  [bold red]{s_name:<10}[/bold red] [dim]›[/dim] [dim yellow]{err}[/dim yellow]")
+        console.print()
 
     if not tools:
-        console.print("[bold yellow]No tools were harvested from active servers.[/bold yellow]")
+        console.print("[dim yellow]No tools were harvested from active servers.[/dim yellow]")
         raise typer.Exit(code=1 if failures else 0)
 
     db_path = cfg.settings.resolved_db_path
     embedding_model = cfg.settings.embedding_model
 
-    console.print(
-        f"[bold cyan]Indexing {len(tools)} tools into vector DB at {db_path}...[/bold cyan]"
-    )
+    console.print(f"[dim]Indexing {len(tools)} tools into vector DB at {db_path}...[/dim]")
 
     with VectorStore(db_path=db_path, embedding_model=embedding_model) as store:
         if force:
@@ -236,31 +277,28 @@ def index_cmd(
         upserted = store.upsert_tools(tools)
         total_count = store.get_total_tools_count()
 
-    summary_table = Table(title="Index Synchronization Summary", border_style="green")
-    summary_table.add_column("Metric", style="bold cyan")
-    summary_table.add_column("Value", style="white")
+    print_section(
+        title="Index Synchronization",
+        lines=[
+            ("harvest", f"{len(tools)} tools harvested  •  {active_count} active servers  •  {len(failures)} errors"),
+            ("store", f"{upserted} updated/new  •  {total_count} total in DB  •  {embedding_model}"),
+            ("path", str(db_path)),
+        ],
+    )
 
-    summary_table.add_row("Harvested Tools", str(len(tools)))
-    summary_table.add_row("New / Updated in Vector DB", str(upserted))
-    summary_table.add_row("Total Indexed Tools in DB", str(total_count))
-    summary_table.add_row("Embedding Model", embedding_model)
-    summary_table.add_row("Database Location", str(db_path))
+    if tools:
+        prefix = "◆ HARVESTED TOOLS "
+        console.print(f"[bold white]{prefix}[/bold white][dim]{'─' * max(3, 58 - len(prefix))}[/dim]")
+        for t in tools:
+            desc_preview = (
+                t.description[:65] + "..."
+                if len(t.description) > 65
+                else (t.description or "-")
+            )
+            console.print(f"  [dim]{t.server_name:<10}[/dim] [dim]›[/dim] [bold white]{t.tool_name}[/bold white]  •  [dim]{desc_preview}[/dim]")
+        console.print()
 
-    console.print(summary_table)
-
-    # Detailed tool listing
-    detail_table = Table(title="Harvested Tools by Server", border_style="cyan")
-    detail_table.add_column("Server", style="bold yellow")
-    detail_table.add_column("Tool Name", style="magenta")
-    detail_table.add_column("Namespaced Name", style="cyan")
-    detail_table.add_column("Description", style="white")
-
-    for t in tools:
-        desc_preview = t.description[:60] + "..." if len(t.description) > 60 else (t.description or "-")
-        detail_table.add_row(t.server_name, t.tool_name, t.namespaced_name, desc_preview)
-
-    console.print(detail_table)
-    console.print("[bold green]✓ Indexing complete and ready for semantic search.[/bold green]")
+    console.print("[green]✓ Indexing complete and ready for semantic search.[/green]")
 
 
 @app.command(name="search")
@@ -287,7 +325,7 @@ def search_cmd(
     try:
         cfg = load_config(config_path, allow_cwd=allow_cwd)
     except Exception as e:
-        console.print(f"[bold red]Failed to load configuration:[/bold red] {e}")
+        console.print(f"[red]Failed to load configuration:[/red] {e}")
         raise typer.Exit(code=1)
 
     db_path = cfg.settings.resolved_db_path
@@ -297,8 +335,8 @@ def search_cmd(
         total_in_db = store.get_total_tools_count()
         if total_in_db == 0:
             console.print(
-                f"[bold yellow]Vector DB is empty ({db_path}).[/bold yellow]\n"
-                "Run [bold cyan]schemaslim index[/bold cyan] first to harvest tool schemas."
+                f"[dim yellow]Vector DB is empty ({db_path}).[/dim yellow]\n"
+                "Run [bold]schemaslim index[/bold] first to harvest tool schemas."
             )
             raise typer.Exit(code=1)
 
@@ -306,36 +344,23 @@ def search_cmd(
 
     if not results:
         console.print(
-            f"[bold yellow]No tools found matching query:[/bold yellow] '{query}' "
+            f"[dim]No tools found matching query:[/dim] '{query}' "
             f"(threshold: {threshold}, total tools: {total_in_db})"
         )
-        return
+        raise typer.Exit(code=0)
 
-    table = Table(title=f"Search Results for: '{query}'", border_style="green")
-    table.add_column("Rank", style="bold cyan", justify="right", width=5)
-    table.add_column("Score", style="bold green", justify="right", width=8)
-    table.add_column("Tool", style="bold yellow")
-    table.add_column("Server", style="magenta")
-    table.add_column("Description", style="white")
-    table.add_column("Parameters", style="dim cyan")
-
-    for i, res in enumerate(results, 1):
-        tool = res.tool
-        score_str = f"{res.score:.3f}"
-        desc = tool.description[:80] + "..." if len(tool.description) > 80 else (tool.description or "-")
-        props = list(tool.parameters.get("properties", {}).keys()) if isinstance(tool.parameters, dict) else []
-        props_str = ", ".join(props) if props else "none"
-
-        table.add_row(
-            str(i),
-            score_str,
-            tool.tool_name,
-            tool.server_name,
-            desc,
-            props_str,
+    prefix = f"◆ SEARCH RESULTS: '{query}' "
+    console.print(f"[bold white]{prefix}[/bold white][dim]{'─' * max(3, 58 - len(prefix))}[/dim]")
+    for i, tool in enumerate(results, 1):
+        score_str = f"{tool.relevance_score:.3f}" if tool.relevance_score is not None else "N/A"
+        desc = (
+            tool.description[:75] + "..."
+            if len(tool.description) > 75
+            else (tool.description or "-")
         )
-
-    console.print(table)
+        console.print(f"  [dim]#{i}[/dim] [[green]{score_str}[/green]] [bold white]{tool.namespaced_name}[/bold white]")
+        console.print(f"     [dim]›[/dim] {desc}")
+    console.print()
 
 
 @app.command(name="stats")
@@ -353,14 +378,14 @@ def stats_cmd(
     try:
         cfg = load_config(config_path, allow_cwd=allow_cwd)
     except Exception as e:
-        console.print(f"[bold red]Failed to load configuration:[/bold red] {e}")
+        console.print(f"[red]Failed to load configuration:[/red] {e}")
         raise typer.Exit(code=1)
 
     db_path = cfg.settings.resolved_db_path
     embedding_model = cfg.settings.embedding_model
 
-    from schemaslim.telemetry import estimate_tools_tokens
     from schemaslim.core.server import META_TOOLS_TOKENS
+    from schemaslim.telemetry import estimate_tools_tokens
 
     with VectorStore(db_path=db_path, embedding_model=embedding_model) as store:
         total_tools = store.get_total_tools_count()
@@ -369,12 +394,14 @@ def stats_cmd(
     active_servers = list(cfg.active_servers.keys())
     baseline_catalog_tokens = estimate_tools_tokens(all_tools) if all_tools else 0
 
-    # Typical SchemaSlim virtualized footprint:
-    # 2 meta-tools (~280 tok) + top-k results schema payload (e.g. 3 tools ~ 400 tok)
     typical_top_k = min(cfg.settings.top_k, total_tools) if total_tools > 0 else 0
     sample_tools = all_tools[:typical_top_k] if all_tools else []
     sample_search_payload_tokens = estimate_tools_tokens(sample_tools)
-    virtualized_tokens = META_TOOLS_TOKENS + sample_search_payload_tokens if total_tools > 0 else META_TOOLS_TOKENS
+    virtualized_tokens = (
+        META_TOOLS_TOKENS + sample_search_payload_tokens
+        if total_tools > 0
+        else META_TOOLS_TOKENS
+    )
     tokens_saved_per_turn = max(0, baseline_catalog_tokens - virtualized_tokens)
     compression_pct = (
         (tokens_saved_per_turn / baseline_catalog_tokens * 100.0)
@@ -382,49 +409,21 @@ def stats_cmd(
         else 0.0
     )
 
-    # Summary table
-    table = Table(title="SchemaSlim Token Economy & Index Analysis", border_style="cyan")
-    table.add_column("Metric", style="bold white", ratio=3)
-    table.add_column("Value", style="bold green", ratio=2)
-    table.add_column("Notes / Description", style="dim", ratio=4)
-
-    table.add_row(
-        "Active MCP Servers",
-        f"{len(active_servers)}",
-        ", ".join(active_servers) if active_servers else "None",
+    servers_preview = f" ({', '.join(active_servers)})" if active_servers else ""
+    print_section(
+        title="Workspace MCP Status",
+        lines=[
+            ("mcp", f"{len(active_servers)} active{servers_preview}  •  0 errors  •  0 disabled"),
+            ("tools", f"{total_tools} (Indexed Tools in DB)  •  ~{compression_pct:.1f}% context compression"),
+            ("db", f"sqlite-vec (384d)  •  {db_path}"),
+            ("catalog", f"{baseline_catalog_tokens:,} raw tokens  ›  ~{virtualized_tokens:,} virtualized"),
+            ("savings", f"[green]+{tokens_saved_per_turn:,} tokens (Savings Per LLM Turn)[/green]"),
+            (
+                "session",
+                f"[green]+{tokens_saved_per_turn * 20:,} tok / 20 turns[/green]  •  [green]+{tokens_saved_per_turn * 100:,} tok / 100 turns[/green]",
+            ),
+        ],
     )
-    table.add_row(
-        "Indexed Tools in DB",
-        f"{total_tools}",
-        f"Storage: {db_path}",
-    )
-    table.add_row(
-        "Baseline Catalog Size",
-        f"{baseline_catalog_tokens:,} tokens",
-        "Tokens required if all tools were exposed directly to LLM",
-    )
-    table.add_row(
-        "Virtualized Footprint",
-        f"{virtualized_tokens:,} tokens",
-        f"2 meta-tools (~{META_TOOLS_TOKENS} tok) + top-{typical_top_k} search results",
-    )
-    table.add_row(
-        "Savings Per LLM Turn",
-        f"+{tokens_saved_per_turn:,} tokens",
-        f"Context compression: ~{compression_pct:.1f}%",
-    )
-    table.add_row(
-        "Est. 20-Turn Session Savings",
-        f"+{tokens_saved_per_turn * 20:,} tokens",
-        "Estimated token reduction across a standard session",
-    )
-    table.add_row(
-        "Est. 100-Turn Agent Savings",
-        f"+{tokens_saved_per_turn * 100:,} tokens",
-        "Estimated token reduction for long-running autonomous workflows",
-    )
-
-    console.print(table)
 
 
 @app.command(name="serve")
@@ -452,22 +451,141 @@ def serve_cmd(
     All logs and dashboard views are directed strictly to stderr to keep
     the stdio JSON-RPC channel pure and uninterrupted.
     """
-    # Load config first (before entering async world)
     try:
         cfg = load_config(config_path, allow_cwd=allow_cwd)
     except Exception as e:
-        # Use stderr console to avoid stdout pollution
         err_console = Console(stderr=True, legacy_windows=False)
-        err_console.print(f"[bold red]Failed to load configuration:[/bold red] {e}")
+        err_console.print(f"[red]Failed to load configuration:[/red] {e}")
         raise typer.Exit(code=1)
 
-    # Initialize logger to stderr only
     setup_logger(level=cfg.settings.log_level, name="schemaslim")
 
     from schemaslim.core.server import VirtualMCPServer
 
     server = VirtualMCPServer()
     asyncio.run(server.start_stdio(cfg, enable_tui=tui))
+
+
+@app.command(name="wrap")
+def wrap_cmd(
+    path: Optional[Path] = typer.Option(
+        None, "--path", "-p", help="Target client configuration file to wrap."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip interactive confirmation prompt."
+    ),
+    no_index: bool = typer.Option(
+        False, "--no-index", help="Skip automatic schema harvesting and indexing."
+    ),
+) -> None:
+    """Wrap an existing MCP client configuration to route through SchemaSlim."""
+    migrator = ConfigMigrator()
+
+    try:
+        if not path:
+            detected = migrator.discover_clients()
+            if not detected:
+                console.print(
+                    "[dim yellow]No existing MCP client configurations automatically discovered.[/dim yellow]\n"
+                    "Specify target file directly: [bold]schemaslim wrap --path /path/to/config.json[/bold]"
+                )
+                raise typer.Exit(code=1)
+
+            if len(detected) > 1 and not yes and sys.stdin.isatty():
+                from schemaslim.ui.menu import select_option
+
+                choices = [
+                    (
+                        c.name,
+                        f"{c.path.name} • {c.server_count} servers"
+                        + (" (wrapped)" if c.is_wrapped else ""),
+                    )
+                    for c in detected
+                ]
+                chosen_idx = select_option(
+                    title="SELECT CLIENT CONFIGURATION",
+                    options=choices,
+                    console=console,
+                )
+                selected_client = detected[chosen_idx]
+                target_file = selected_client.path
+            else:
+                selected_client = detected[0]
+                target_file = selected_client.path
+        else:
+            target_file = path
+
+        result = migrator.wrap(
+            target_path=target_file,
+            auto_confirm=yes,
+            run_index=not no_index,
+        )
+
+        if result.cancelled:
+            console.print("[dim]Wrap operation cancelled.[/dim]")
+            raise typer.Exit(code=0)
+
+        if not result.success:
+            console.print(f"[red]Wrap failed:[/red] {result.message}")
+            raise typer.Exit(code=1)
+
+        print_section(
+            title="SchemaSlim Virtualization",
+            lines=[
+                ("client", str(result.client_name)),
+                ("target", str(result.target_path)),
+                ("backup", str(result.backup_path) if result.backup_path else "none"),
+                ("mcp", f"{result.servers_migrated} servers migrated"),
+                ("global", str(migrator.global_config_path)),
+                ("status", "[green]Virtualization Active (schemaslim serve)[/green]"),
+            ],
+        )
+        console.print(f"[green]✓ {result.message}[/green]")
+
+    except MigrationError as e:
+        console.print(f"[red]Migration Error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command(name="unwrap")
+def unwrap_cmd(
+    path: Optional[Path] = typer.Option(
+        None,
+        "--path",
+        "-p",
+        help="Target client configuration file to restore from backup.",
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip interactive confirmation prompt."
+    ),
+) -> None:
+    """Restore original client configuration from .schemaslim.bak backup."""
+    migrator = ConfigMigrator()
+
+    try:
+        result = migrator.unwrap(target_path=path, auto_confirm=yes)
+
+        if result.cancelled:
+            console.print("[dim]Unwrap operation cancelled.[/dim]")
+            raise typer.Exit(code=0)
+
+        if not result.success:
+            console.print(f"[red]Unwrap failed:[/red] {result.message}")
+            raise typer.Exit(code=1)
+
+        print_section(
+            title="SchemaSlim Rollback",
+            lines=[
+                ("client", str(result.client_name)),
+                ("target", str(result.target_path)),
+                ("status", "[green]Original configuration restored[/green]"),
+            ],
+        )
+        console.print(f"[green]✓ {result.message}[/green]")
+
+    except MigrationError as e:
+        console.print(f"[red]Rollback Error:[/red] {e}")
+        raise typer.Exit(code=1)
 
 
 @app.command(name="benchmark")
@@ -481,15 +599,16 @@ def benchmark_cmd(
 ) -> None:
     """Run synthetic MCP benchmark to evaluate context compression and search latency."""
     if output not in {"table", "json"}:
-        console.print(f"[bold red]Error:[/bold red] Invalid output format '{output}'. Choose 'table' or 'json'.")
+        console.print(
+            f"[red]Error:[/red] Invalid output format '{output}'. Choose 'table' or 'json'."
+        )
         raise typer.Exit(code=1)
 
     if output == "json":
-        # Suppress informative logs for clean JSON stdout
         setup_logger(level="ERROR")
     else:
         console.print(
-            f"[bold cyan]Running SchemaSlim synthetic virtualization benchmark ({runs} iterations)...[/bold cyan]"
+            f"[dim]Running SchemaSlim synthetic virtualization benchmark ({runs} iterations)...[/dim]"
         )
 
     from schemaslim.benchmark import BenchmarkRunner
@@ -501,74 +620,34 @@ def benchmark_cmd(
         sys.stdout.write(report.model_dump_json(indent=2) + "\n")
         return
 
-    # Overview table
-    summary_table = Table(
-        title="SchemaSlim Context Virtualization Benchmark Summary",
-        border_style="green",
-    )
-    summary_table.add_column("Metric", style="bold cyan", ratio=3)
-    summary_table.add_column("Value", style="bold white", ratio=2)
-    summary_table.add_column("Details", style="dim", ratio=4)
-
-    summary_table.add_row(
-        "Synthetic Servers",
-        f"{report.servers_count} servers ({report.total_tools} tools)",
-        "git_server, db_server, fs_server, api_server",
-    )
-    summary_table.add_row(
-        "Full Catalog Footprint",
-        f"{report.tokens_baseline:,} tokens",
-        "Raw unvirtualized MCP tools manifest",
-    )
-    summary_table.add_row(
-        "Virtualized Footprint / Turn",
-        f"{report.avg_tokens_virtualized:,} tokens",
-        "2 meta-tools + matched tool schemas",
-    )
-    summary_table.add_row(
-        "Context Saved / Turn",
-        f"[bold green]+{report.avg_tokens_saved:,} tokens[/bold green]",
-        f"[bold green]~{report.compression_pct:.1f}% reduction[/bold green]",
-    )
-    summary_table.add_row(
-        "Search Latency (Mean)",
-        f"{report.latency_mean_ms:.2f} ms",
-        f"p50: {report.latency_p50_ms:.2f} ms │ p95: {report.latency_p95_ms:.2f} ms",
+    print_section(
+        title="Context Virtualization Benchmark Summary",
+        lines=[
+            ("servers", f"{report.servers_count} synthetic  •  {report.total_tools} tools"),
+            (
+                "context",
+                f"{report.tokens_baseline:,} raw tokens  ›  ~{report.avg_tokens_virtualized:,} virtualized  •  [green]+{report.avg_tokens_saved:,} saved/turn (~{report.compression_pct:.1f}%)[/green]",
+            ),
+            (
+                "latency",
+                f"{report.latency_mean_ms:.2f}ms mean  •  p50: {report.latency_p50_ms:.2f}ms  •  p95: {report.latency_p95_ms:.2f}ms",
+            ),
+        ],
     )
 
-    console.print(summary_table)
-
-    # Detailed query table
-    detail_table = Table(
-        title="Benchmark Intent Query Breakdown",
-        border_style="cyan",
-    )
-    detail_table.add_column("#", justify="right", width=4)
-    detail_table.add_column("Developer Query Intent", ratio=4)
-    detail_table.add_column("Top Match", style="bold yellow", ratio=3)
-    detail_table.add_column("Score", justify="right", style="green", width=7)
-    detail_table.add_column("Latency", justify="right", style="magenta", width=10)
-    detail_table.add_column("Context Saved", justify="right", style="bold green", width=15)
-    detail_table.add_column("Economy", justify="right", style="cyan", width=9)
-
+    prefix = "◆ Benchmark Intent Query Breakdown "
+    console.print(f"[bold white]{prefix}[/bold white][dim]{'─' * max(3, 58 - len(prefix))}[/dim]")
     for i, q in enumerate(report.queries_detail, 1):
-        detail_table.add_row(
-            str(i),
-            q.query,
-            q.matched_tool,
-            f"{q.score:.3f}",
-            f"{q.latency_ms:.1f} ms",
-            f"+{q.tokens_saved:,} tok",
-            f"~{q.compression_pct:.1f}%",
+        console.print(f"  [dim]#{i}[/dim] [white]{q.query}[/white]")
+        console.print(
+            f"     [dim]›[/dim] [white]{q.matched_tool}[/white]  •  [dim]score:[/dim] [green]{q.score:.3f}[/green]  •  [dim]latency:[/dim] {q.latency_ms:.1f}ms  •  [green]+{q.tokens_saved:,} tok[/green] (~{q.compression_pct:.1f}%)"
         )
+    console.print()
 
-    console.print(detail_table)
     console.print(
-        f"[bold green]✓ Benchmark complete:[/bold green] Achieved [bold]{report.compression_pct:.1f}%[/bold] token reduction with [bold]{report.latency_mean_ms:.1f}ms[/bold] avg routing latency."
+        f"[green]✓ Benchmark complete:[/green] Achieved [bold]{report.compression_pct:.1f}%[/bold] token reduction with [bold]{report.latency_mean_ms:.1f}ms[/bold] avg routing latency."
     )
 
 
 if __name__ == "__main__":
     app()
-
-

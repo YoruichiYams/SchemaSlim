@@ -1,0 +1,81 @@
+================================================================================
+SCHEMASLIM TECHNICAL ARCHITECTURE & SYSTEMS SPECIFICATION
+================================================================================
+
+This document supersedes all prior marketing summaries and pitch narratives.
+For the formal mathematical formulations, process contracts, security proofs,
+and complete empirical coverage data, refer directly to the authoritative RFC:
+
+  --> ENGINEERING_SPEC.md (located in the repository root)
+
+--------------------------------------------------------------------------------
+1. CORE ARCHITECTURAL SUMMARY
+--------------------------------------------------------------------------------
+SchemaSlim is an asynchronous, tools-only Model Context Protocol (MCP) virtualization
+proxy (spec 2024-11-05). It mounts between upstream LLM clients (Claude Desktop,
+Cursor, Antigravity) and downstream MCP child servers to eliminate context saturation
+and establish a deterministic execution security boundary.
+
+* Upstream Interface:
+  Strictly 2 meta-tools advertised:
+  - schemaslim_search (query: string, limit: int = 5)
+  - schemaslim_call   (namespaced_name: string, arguments: object)
+  Unsupported features (by design): resources/*, prompts/*, sampling/*,
+  notifications/tools/list_changed.
+
+* Process Lifecycle & Pooling:
+  - MCPSessionPool maintains persistent child subprocesses across the entire proxy
+    lifecycle via a top-level AsyncExitStack.
+  - Subprocesses are NOT spawned per call; stateful workloads (PostgreSQL
+    transactions, in-memory caches, git working copies, REPL sessions) are
+    preserved across turns.
+  - Bound by connect_timeout (15.0s) and call_timeout (60.0s).
+  - Configurable idle process reaper (idle_timeout) with automatic on-demand
+    transparent revival upon subsequent tool invocation, plus per-server keep_alive
+    exemption for stateful workloads.
+  - Termination: SIGTERM -> 2.0s grace period -> SIGKILL on POSIX; Win32 Job
+    Objects on Windows.
+
+--------------------------------------------------------------------------------
+2. HYBRID RETRIEVAL FORMULATION
+--------------------------------------------------------------------------------
+Dense (sqlite-vec 384d BGE-small-en-v1.5) + Sparse (SQLite FTS5 BM25):
+  v_score = max(0.0, min(1.0, 1.0 - (dist / 2.0)))
+  l_score = min(1.0, 1.0 / (1.0 + abs(rank) * 0.1))
+
+  Hybrid Score =
+    (0.70 * v_score) + (0.30 * l_score)   if l_score > 0.0
+    v_score * 0.95                         if l_score == 0.0
+
+Candidates: overfetch k = max(limit * 4, 20), filtered by threshold >= 0.45.
+(Note: Prior claims of Reciprocal Rank Fusion / RRF have been formally corrected;
+the production system uses the Weighted Linear Combination above).
+
+--------------------------------------------------------------------------------
+3. SECURITY HARNESS & EXECUTION BOUNDARY
+--------------------------------------------------------------------------------
+- SCHEMASLIM-SEC-01: Ambient host secret stripping (CWE-200 platform whitelist).
+- SCHEMASLIM-SEC-02: Untrusted CWD hijacking prevention (CWE-426).
+- SCHEMASLIM-SEC-03: Confused Deputy prevention (double underscore namespace lock).
+- SCHEMASLIM-SEC-04: Tokenizer DoS protection (cyclic reference traps, recursion > 2000).
+- SCHEMASLIM-SEC-05: SQLite parameter overflow protection (500-item chunks, limit <= 20).
+- SCHEMASLIM-SEC-06: Process execution bounding (15s connect, 60s tool timeouts).
+- SCHEMASLIM-SEC-07: Execution Safety Policy & Destructive Call Boundary:
+    Modes: "permissive", "ask" (default), "readonly".
+    Classifier: evaluates blocked_tools, allowed_tools, and regex patterns
+    (delete, drop, destroy, remove, truncate, write, execute, shell, bash, kill, eval).
+    In "ask" mode, destructive tools trigger a security rejection until re-invoked
+    with {"_confirmed": true}. The proxy strips "_confirmed" before downstream dispatch.
+
+--------------------------------------------------------------------------------
+4. VERIFIED EMPIRICAL METRICS
+--------------------------------------------------------------------------------
+- Test Suite: 139 automated tests across 10 test suites (100% passing status).
+- Code Coverage: 85% measured via pytest-cov across 2,022 statements.
+- Cold-Start Token Reduction: ~98.6% drop (from ~20,000+ to ~280 tokens).
+- Attention Budget: Prevents "Lost in the Middle" cognitive degradation and tool
+  parameter hallucinations by retrieving only 3-5 relevant tools JIT.
+
+================================================================================
+See ENGINEERING_SPEC.md for full technical details, diagrams, and citations.
+================================================================================

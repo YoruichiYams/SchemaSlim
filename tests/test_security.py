@@ -11,9 +11,15 @@ from mcp import types
 from pydantic import ValidationError
 
 from schemaslim.config.loader import ConfigNotFoundError, find_config_file
-from schemaslim.config.models import Config, StdioServerConfig
+from schemaslim.config.models import (
+    DEFAULT_DESTRUCTIVE_PATTERNS,
+    Config,
+    SecurityPolicy,
+    StdioServerConfig,
+)
 from schemaslim.core.harvester import SchemaHarvester
 from schemaslim.core.pool import MCPSessionPool, SessionCallError
+from schemaslim.core.security import is_destructive
 from schemaslim.core.server import VirtualMCPServer
 from schemaslim.storage.models import IndexedTool
 from schemaslim.storage.vector_store import VectorStore
@@ -466,3 +472,252 @@ def test_remove_server_tools_large_volume_chunking(tmp_path: Path):
         removed = store.remove_server_tools("huge_server")
         assert removed == 1200
         assert store.get_total_tools_count() == 0
+
+
+# ── 9. Destructive Call Boundary & Safety Policy (SCHEMASLIM-SEC-07) ─────────
+
+
+def test_security_policy_config_parsing():
+    """Verify parsing and validation of SecurityPolicy within Config."""
+    # 1. Default policy values
+    cfg_default = Config()
+    assert cfg_default.security.mode == "ask"
+    assert cfg_default.security.allowed_tools == []
+    assert cfg_default.security.blocked_tools == []
+    assert set(cfg_default.security.destructive_patterns) == set(DEFAULT_DESTRUCTIVE_PATTERNS)
+
+    # 2. Custom policy values
+    custom_data = {
+        "security": {
+            "mode": "readonly",
+            "destructive_patterns": ["purge", "destroy"],
+            "allowed_tools": ["fs__delete_temp"],
+            "blocked_tools": ["admin__eval"],
+        }
+    }
+    cfg_custom = Config.model_validate(custom_data)
+    assert cfg_custom.security.mode == "readonly"
+    assert cfg_custom.security.destructive_patterns == ["purge", "destroy"]
+    assert cfg_custom.security.allowed_tools == ["fs__delete_temp"]
+    assert cfg_custom.security.blocked_tools == ["admin__eval"]
+
+    # 3. Invalid mode raises validation error
+    with pytest.raises(ValidationError):
+        Config.model_validate({"security": {"mode": "invalid_mode"}})
+
+
+def test_is_destructive_pattern_detection():
+    """Verify deterministic classification of destructive tool names and descriptions."""
+    policy = SecurityPolicy()
+
+    # Tool name pattern detection
+    assert is_destructive("fs__delete_file", policy=policy) is True
+    assert is_destructive("db__drop_table", policy=policy) is True
+    assert is_destructive("bash__execute", policy=policy) is True
+    assert is_destructive("terminal__shell", policy=policy) is True
+    assert is_destructive("process__kill", policy=policy) is True
+    assert is_destructive("calc__eval", policy=policy) is True
+    assert is_destructive("fs__remove_dir", policy=policy) is True
+    assert is_destructive("data__truncate_table", policy=policy) is True
+    assert is_destructive("fs__write_file", policy=policy) is True
+
+    # Safe tool names
+    assert is_destructive("fs__read_file", policy=policy) is False
+    assert is_destructive("git__status", policy=policy) is False
+    assert is_destructive("db__list_tables", policy=policy) is False
+    assert is_destructive("api__get_user", policy=policy) is False
+
+    # Detection via description
+    assert is_destructive("custom_tool", description="Permanently delete user data", policy=policy) is True
+    assert is_destructive("custom_query", description="Drop database tables if corrupt", policy=policy) is True
+    assert is_destructive("fetcher", description="Fetch HTTP contents safely", policy=policy) is False
+
+
+def test_is_destructive_allowed_and_blocked_tools():
+    """Verify that allowed_tools overrides patterns and blocked_tools forces True."""
+    # Whitelist exemption
+    policy_allowed = SecurityPolicy(allowed_tools=["fs__delete_file"])
+    assert is_destructive("fs__delete_file", policy=policy_allowed) is False
+
+    # Blacklist forced block
+    policy_blocked = SecurityPolicy(blocked_tools=["fs__read_file"])
+    assert is_destructive("fs__read_file", policy=policy_blocked) is True
+
+
+@pytest.mark.asyncio
+async def test_security_guard_blocked_tool_execution():
+    """Verify that tools listed in blocked_tools are unconditionally rejected."""
+    mock_pool = MagicMock()
+    mock_pool.call_tool = AsyncMock()
+
+    policy = SecurityPolicy(blocked_tools=["danger__run"])
+    server = VirtualMCPServer(pool=mock_pool, security_policy=policy)
+
+    params = types.CallToolRequestParams(
+        name="schemaslim_call",
+        arguments={"namespaced_name": "danger__run", "arguments": {}},
+    )
+    result = await server._handle_call_tool(None, params)
+
+    assert result.is_error is True
+    assert "Tool 'danger__run' is blocked by security policy" in result.content[0].text
+    mock_pool.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_security_guard_readonly_mode():
+    """Verify that destructive tools are blocked when security mode is 'readonly'."""
+    mock_pool = MagicMock()
+    mock_pool.call_tool = AsyncMock()
+
+    policy = SecurityPolicy(mode="readonly")
+    server = VirtualMCPServer(pool=mock_pool, security_policy=policy)
+
+    # 1. Destructive tool rejected
+    destr_params = types.CallToolRequestParams(
+        name="schemaslim_call",
+        arguments={"namespaced_name": "fs__delete_file", "arguments": {"path": "/foo"}},
+    )
+    result = await server._handle_call_tool(None, destr_params)
+    assert result.is_error is True
+    assert "Execution denied: tool is destructive and security mode is 'readonly'" in result.content[0].text
+    mock_pool.call_tool.assert_not_called()
+
+    # 2. Non-destructive tool permitted
+    mock_pool.call_tool.return_value = types.CallToolResult(
+        content=[types.TextContent(type="text", text="file contents")],
+        is_error=False,
+    )
+    safe_params = types.CallToolRequestParams(
+        name="schemaslim_call",
+        arguments={"namespaced_name": "fs__read_file", "arguments": {"path": "/foo"}},
+    )
+    safe_result = await server._handle_call_tool(None, safe_params)
+    assert safe_result.is_error is False
+    mock_pool.call_tool.assert_awaited_once_with("fs__read_file", {"path": "/foo"})
+
+
+@pytest.mark.asyncio
+async def test_security_guard_ask_mode_rejection_without_confirmed():
+    """Verify that ask mode challenges unconfirmed destructive calls with a security warning."""
+    mock_pool = MagicMock()
+    mock_pool.call_tool = AsyncMock()
+
+    policy = SecurityPolicy(mode="ask")
+    server = VirtualMCPServer(pool=mock_pool, security_policy=policy)
+
+    params = types.CallToolRequestParams(
+        name="schemaslim_call",
+        arguments={"namespaced_name": "db__drop_table", "arguments": {"table": "logs"}},
+    )
+    result = await server._handle_call_tool(None, params)
+
+    assert result.is_error is True
+    assert "Security Warning: Tool 'db__drop_table' has been flagged as destructive/mutating" in result.content[0].text
+    assert "'_confirmed': true" in result.content[0].text
+    mock_pool.call_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_security_guard_ask_mode_confirmed_execution_and_sanitization():
+    """Verify that providing _confirmed: true permits execution and strips _confirmed from arguments."""
+    mock_pool = MagicMock()
+    mock_pool.call_tool = AsyncMock(
+        return_value=types.CallToolResult(
+            content=[types.TextContent(type="text", text="table dropped")],
+            is_error=False,
+        )
+    )
+
+    policy = SecurityPolicy(mode="ask")
+    server = VirtualMCPServer(pool=mock_pool, security_policy=policy)
+
+    # Pass _confirmed in tool arguments
+    params = types.CallToolRequestParams(
+        name="schemaslim_call",
+        arguments={
+            "namespaced_name": "db__drop_table",
+            "arguments": {"table": "logs", "_confirmed": True},
+        },
+    )
+    result = await server._handle_call_tool(None, params)
+
+    assert result.is_error is False
+    assert "table dropped" in result.content[0].text
+    # Verify _confirmed was stripped before forwarding to child session
+    mock_pool.call_tool.assert_awaited_once_with("db__drop_table", {"table": "logs"})
+
+
+@pytest.mark.asyncio
+async def test_security_guard_permissive_mode_bypasses_confirmation():
+    """Verify that permissive mode allows destructive tool execution without confirmation."""
+    mock_pool = MagicMock()
+    mock_pool.call_tool = AsyncMock(
+        return_value=types.CallToolResult(
+            content=[types.TextContent(type="text", text="executed")],
+            is_error=False,
+        )
+    )
+
+    policy = SecurityPolicy(mode="permissive")
+    server = VirtualMCPServer(pool=mock_pool, security_policy=policy)
+
+    params = types.CallToolRequestParams(
+        name="schemaslim_call",
+        arguments={"namespaced_name": "bash__execute", "arguments": {"cmd": "rm -rf /tmp/test"}},
+    )
+    result = await server._handle_call_tool(None, params)
+
+    assert result.is_error is False
+    mock_pool.call_tool.assert_awaited_once_with("bash__execute", {"cmd": "rm -rf /tmp/test"})
+
+
+@pytest.mark.asyncio
+async def test_schemaslim_search_injects_security_metadata(tmp_path: Path):
+    """Verify that schemaslim_search injects is_destructive and security_mode into results."""
+    db_path = tmp_path / "search_sec.db"
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [[0.1] * 384, [0.1] * 384]
+
+    tools = [
+        IndexedTool.create(
+            server_name="fs",
+            tool_name="delete_file",
+            description="Delete file permanently",
+            parameters={"type": "object"},
+        ),
+        IndexedTool.create(
+            server_name="fs",
+            tool_name="read_file",
+            description="Read file safely",
+            parameters={"type": "object"},
+        ),
+    ]
+
+    with VectorStore(db_path=db_path, embedder=mock_embedder) as store:
+        store.upsert_tools(tools)
+
+    policy = SecurityPolicy(mode="ask")
+    server = VirtualMCPServer(security_policy=policy)
+    active_store = VectorStore(db_path=db_path, embedder=mock_embedder)
+    server._store = active_store
+
+    try:
+        params = types.CallToolRequestParams(
+            name="schemaslim_search",
+            arguments={"query": "file", "limit": 10},
+        )
+        res = await server._handle_call_tool(None, params)
+        assert not res.is_error
+
+        payload = json.loads(res.content[0].text)
+        assert payload["security_mode"] == "ask"
+        assert len(payload["results"]) == 2
+
+        results_by_name = {r["namespaced_name"]: r for r in payload["results"]}
+        assert results_by_name["fs__delete_file"]["is_destructive"] is True
+        assert results_by_name["fs__delete_file"]["security_mode"] == "ask"
+        assert results_by_name["fs__read_file"]["is_destructive"] is False
+        assert results_by_name["fs__read_file"]["security_mode"] == "ask"
+    finally:
+        active_store.close()

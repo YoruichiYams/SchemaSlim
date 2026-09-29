@@ -132,3 +132,18 @@ class SearchResult(BaseModel):
     lexical_score: float = Field(
         default=0.0, ge=0.0, le=1.0, description="Normalized FTS5 BM25 score"
     )
+
+    @property
+    def namespaced_name(self) -> str:
+        """Convenience property delegating to tool.namespaced_name."""
+        return self.tool.namespaced_name
+
+    @property
+    def description(self) -> str:
+        """Convenience property delegating to tool.description."""
+        return self.tool.description
+
+    @property
+    def relevance_score(self) -> float:
+        """Convenience property delegating to score."""
+        return self.score

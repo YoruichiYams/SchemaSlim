@@ -10,8 +10,10 @@ from schemaslim.config.loader import (
     save_config,
 )
 from schemaslim.config.models import (
+    DEFAULT_DESTRUCTIVE_PATTERNS,
     Config,
     SchemaSlimSettings,
+    SecurityPolicy,
     ServerConfig,
     SseServerConfig,
     StdioServerConfig,
@@ -22,7 +24,9 @@ __all__ = [
     "ConfigError",
     "ConfigNotFoundError",
     "ConfigValidationError",
+    "DEFAULT_DESTRUCTIVE_PATTERNS",
     "SchemaSlimSettings",
+    "SecurityPolicy",
     "ServerConfig",
     "SseServerConfig",
     "StdioServerConfig",

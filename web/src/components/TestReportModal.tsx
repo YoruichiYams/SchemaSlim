@@ -44,10 +44,46 @@ export const TestReportModal: React.FC<TestReportModalProps> = ({ isOpen, onClos
 
   const testModules: TestModule[] = [
     {
-      filename: 'tests/test_security.py',
-      passedCount: 13,
+      filename: 'tests/test_config.py',
+      passedCount: 23,
+      duration: '0.54s',
+      description: 'Pydantic schema validation, idle_timeout parsing, keep_alive server config, Claude Desktop transport inference, UTF-8 BOM, CLI flags',
+    },
+    {
+      filename: 'tests/test_cli.py',
+      passedCount: 18,
       duration: '0.68s',
-      description: 'CWE-200 env sanitization, CWD hijacking defense, restricted shell tokens',
+      description: 'CLI argument parsing, config validate/show/init, stats, search, benchmark, wrap/unwrap headless execution, and interactive menu primitives',
+    },
+    {
+      filename: 'tests/test_server.py',
+      passedCount: 16,
+      duration: '0.94s',
+      description: 'stdio JSON-RPC proxying, dynamic schemas, stdout stream purity, meta-tools dispatch',
+    },
+    {
+      filename: 'tests/test_telemetry.py',
+      passedCount: 14,
+      duration: '0.62s',
+      description: 'Rich stderr live telemetry formatting, token estimators, circular buffer thread-safety',
+    },
+    {
+      filename: 'tests/test_security.py',
+      passedCount: 22,
+      duration: '0.72s',
+      description: 'CWE-200 env sanitization, CWD hijacking defense, destructive call boundary, safety policies (permissive/ask/readonly), _confirmed stripping',
+    },
+    {
+      filename: 'tests/test_pool.py',
+      passedCount: 19,
+      duration: '0.84s',
+      description: 'MCPSessionPool lifecycle, idle process reaper, keep_alive stateful exemption, transparent on-demand revival, persistent connections, secret stripping',
+    },
+    {
+      filename: 'tests/test_storage.py',
+      passedCount: 9,
+      duration: '0.81s',
+      description: 'sqlite-vec 384d cosine embeddings, SQLite FTS5 BM25 lexical matches, idempotent hashing',
     },
     {
       filename: 'tests/test_migrator.py',
@@ -56,28 +92,16 @@ export const TestReportModal: React.FC<TestReportModalProps> = ({ isOpen, onClos
       description: 'UTF-8 BOM decoding, atomic writes, automatic .schemaslim.bak rollbacks',
     },
     {
-      filename: 'tests/test_server.py',
-      passedCount: 16,
-      duration: '0.94s',
-      description: 'stdio JSON-RPC proxying, dynamic schemas, stdout stream purity',
+      filename: 'tests/test_e2e.py',
+      passedCount: 5,
+      duration: '0.48s',
+      description: 'Full client-to-child proxy flow, synthetic benchmark runner, JSON/table report validation',
     },
     {
-      filename: 'tests/test_pool.py',
-      passedCount: 12,
-      duration: '0.76s',
-      description: 'MCPSessionPool lifecycle, process isolation, secret stripping',
-    },
-    {
-      filename: 'tests/test_storage.py',
-      passedCount: 9,
-      duration: '0.81s',
-      description: 'sqlite-vec 384d cosine embeddings, SQLite FTS5 BM25 lexical matches',
-    },
-    {
-      filename: 'tests/test_telemetry.py',
-      passedCount: 14,
-      duration: '0.62s',
-      description: 'Rich stderr live telemetry formatting, zero stdout corruption',
+      filename: 'tests/test_harvester.py',
+      passedCount: 4,
+      duration: '0.35s',
+      description: 'Subprocess stdio and SSE harvesting, parallel worker isolation, /sse fallback probing',
     },
   ];
 
@@ -117,7 +141,7 @@ export const TestReportModal: React.FC<TestReportModalProps> = ({ isOpen, onClos
                       Pytest Suite Verification
                     </h3>
                     <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
-                      v0.1.3
+                      v0.2.0
                     </span>
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   </div>
@@ -140,11 +164,11 @@ export const TestReportModal: React.FC<TestReportModalProps> = ({ isOpen, onClos
             <div className="px-6 py-3.5 bg-zinc-900/60 border-b border-zinc-850 flex flex-wrap items-center justify-between text-xs font-mono text-zinc-300 gap-2">
               <div className="flex items-center gap-2 text-emerald-400 font-medium">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>104 passed in 4.23s</span>
+                <span>139 passed in 8.21s</span>
               </div>
               <div className="flex items-center gap-3 text-zinc-400 text-[11px]">
                 <span className="text-zinc-500">•</span>
-                <span className="text-zinc-300">100% code coverage</span>
+                <span className="text-zinc-300">85% code coverage</span>
                 <span className="text-zinc-500">•</span>
                 <span>Python 3.12.14</span>
               </div>

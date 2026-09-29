@@ -70,21 +70,22 @@ tools = [
       icon: Database,
       headline: 'Sub-60ms Hybrid Dense + Lexical Lookup',
       description:
-        'SchemaSlim embeds the query locally using FastEmbed (ONNX BGE-small-en-v1.5 384d) and merges dense vector similarity (sqlite-vec) with keyword ranking (SQLite FTS5 BM25). 100% offline, zero API keys.',
-      metrics: 'p50: 53.1ms | 0 external network calls | ~115 MB RAM',
+        'SchemaSlim embeds the query locally using FastEmbed (ONNX BGE-small-en-v1.5 384d) and merges dense vector similarity (sqlite-vec) with keyword ranking (SQLite FTS5 BM25) via weighted linear scoring (k=20, threshold=0.45). 100% offline, zero API keys.',
+      metrics: 'p50: 53.1ms | weights: 0.70 vec + 0.30 fts | threshold: 0.45',
       codeSnippet: `// Executed in local C-extension sqlite-vec & SQLite FTS5
 WITH vector_matches AS (
   SELECT tool_id, distance
   FROM vec_tools
-  WHERE embedding MATCH :query_vector
-  ORDER BY distance LIMIT 20
+  WHERE embedding MATCH :query_vector AND k = 20
+  ORDER BY distance ASC
 ),
 fts_matches AS (
-  SELECT rowid AS tool_id, bm25(tools_fts) AS bm25_score
+  SELECT namespaced_name, rank
   FROM tools_fts
   WHERE tools_fts MATCH :bm25_query LIMIT 20
 )
--- Reciprocal Rank Fusion (RRF) computes final relevance score`,
+// Weighted Linear Hybrid Scoring (threshold = 0.45):
+// score = (0.70 * vec_score) + (0.30 * fts_score) if fts > 0 else (vec_score * 0.95)`,
     },
     {
       id: 4,

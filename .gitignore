@@ -59,6 +59,7 @@ schemaslim.json
 # Mnemo local session data (keep base instructions, ignore caches)
 .gemini/tmp/
 .gemini/logs/
+mnemo_graph.html
 
 # OS specific
 .DS_Store

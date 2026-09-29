@@ -22,7 +22,7 @@ export const SecurityPage: React.FC = () => {
           </InView>
           <InView transition={{ delay: 0.15 }}>
             <p className="text-sm text-zinc-400 leading-relaxed font-normal">
-              MCP child servers run arbitrary code on developer machines. SchemaSlim enforces zero-trust process execution through 6 validated hardening vectors backed by 104 regression tests.
+              MCP child servers run arbitrary code on developer machines. SchemaSlim enforces zero-trust process execution through 7 validated hardening vectors backed by 139 regression tests.
             </p>
           </InView>
         </div>

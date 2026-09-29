@@ -125,7 +125,7 @@ export const CommandReference: React.FC = () => {
           </p>
         </div>
         <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-400">
-          <span>v0.1.3</span>
+          <span>v0.2.0</span>
           <span className="text-zinc-600">•</span>
           <span>100% Local</span>
         </div>

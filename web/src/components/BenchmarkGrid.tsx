@@ -176,7 +176,7 @@ export const BenchmarkGrid: React.FC = () => {
 
       <div className="text-xs text-zinc-500 font-mono flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-zinc-850">
         <span>Synthetic benchmark measured via: schemaslim benchmark -r 5</span>
-        <span className="text-emerald-400">104 Automated Tests Passing (100% Coverage)</span>
+        <span className="text-emerald-400">139 Automated Tests Passing (85% Coverage)</span>
       </div>
     </div>
   );

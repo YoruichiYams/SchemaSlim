@@ -21,7 +21,7 @@ SchemaSlim virtualizes tool discovery into on-demand retrieval, presenting exact
 ## Key Highlights
 
 - **85%+ Prompt Footprint Reduction:** Shrinks multi-server tool schemas down to 2 meta-tools (`schemaslim_search` and `schemaslim_call`).
-- **Sub-60ms JIT Retrieval:** 100% local FastEmbed (`BGE-small-en-v1.5`) + SQLite-vec cosine search + SQLite FTS5 BM25 with Reciprocal Rank Fusion. Zero external API calls.
+- **Sub-60ms JIT Retrieval:** 100% local FastEmbed (`BGE-small-en-v1.5`) + SQLite-vec cosine search + SQLite FTS5 BM25 with Weighted Linear Hybrid Scoring ($0.70 \times \text{dense} + 0.30 \times \text{sparse}$). Zero external API calls.
 - **Process & Secret Isolation (CWE-200 Safe):** Strips ambient host environment variables (`OPENAI_API_KEY`, AWS tokens) before spawning child MCP processes.
 - **Path Traversal Defense (CWE-426 Safe):** Explicitly isolates execution directory and guards against local CWD hijacking.
 - **Zero-Config Ecosystem Discovery:** One-command scanning, backup (`.schemaslim.bak`), and virtualization across Claude Desktop, Cursor, Antigravity, VS Code, Windsurf, Codex, and custom CLI harnesses.
@@ -82,7 +82,7 @@ Full setup instructions and copyable snippets are available in the [Documentatio
       │   + SQLite FTS5 BM25 Lookup   │
       └──────────────┬────────────────┘
                      │
-         Isolated Ephemeral Dispatch
+         Isolated Persistent Session Dispatch
                      ▼
       ┌───────────────────────────────┐
       │  Isolated MCP Child Processes │
